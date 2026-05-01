@@ -36,6 +36,8 @@ const SCENARIO_MATRIX_PATH: &str = "docs/e2e_scenario_matrix.json";
 const PERF_SLI_MATRIX_PATH: &str = "docs/perf_sli_matrix.json";
 const FRANKEN_NODE_MISSION_CONTRACT_PATH: &str = "docs/franken-node-mission-contract.json";
 const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
+const WEEKLY_CERTIFICATION_VERDICT_WORKFLOW_PATH: &str =
+    ".github/workflows/weekly-certification-verdict.yml";
 const SUITE_CLASSIFICATION_PATH: &str = "tests/suite_classification.toml";
 const TEST_DOUBLE_INVENTORY_PATH: &str = "docs/test_double_inventory.json";
 const FULL_SUITE_GATE_PATH: &str = "tests/ci_full_suite_gate.rs";
@@ -1891,6 +1893,44 @@ fn ci_workflow_runs_perf_claim_integrity_bundle_before_run_all_gate() {
             "CI workflow must include claim-integrity gate wiring token: {token}"
         );
     }
+}
+
+#[test]
+fn weekly_certification_verdict_workflow_regenerates_verdict_and_opens_pr() {
+    let workflow = load_text(WEEKLY_CERTIFICATION_VERDICT_WORKFLOW_PATH);
+
+    for token in [
+        "cron: \"0 7 * * 1\"",
+        "workflow_dispatch:",
+        "contents: write",
+        "pull-requests: write",
+        "conformance_must_pass_gate",
+        "lifecycle_hook_parity_matrix_writes_evidence_artifact",
+        "full_certification",
+        "tests/full_suite_gate/certification_verdict.json",
+        "docs/evidence/dropin-certification-verdict.json",
+        "\"overall_verdict\": \"NOT_CERTIFIED\"",
+        "\"overall_verdict\": \"CERTIFIED\" if not blocking_reasons else \"NOT_CERTIFIED\"",
+        "peter-evans/create-pull-request@v7",
+        "automation/weekly-certification-verdict",
+    ] {
+        assert!(
+            workflow.contains(token),
+            "weekly certification verdict workflow must include token: {token}"
+        );
+    }
+
+    let cron_idx = workflow.find("cron: \"0 7 * * 1\"").unwrap_or(usize::MAX);
+    let verdict_idx = workflow
+        .find("docs/evidence/dropin-certification-verdict.json")
+        .unwrap_or(usize::MAX);
+    let pr_idx = workflow
+        .find("peter-evans/create-pull-request@v7")
+        .unwrap_or(usize::MAX);
+    assert!(
+        cron_idx < verdict_idx && verdict_idx < pr_idx,
+        "weekly certification verdict workflow must schedule, regenerate the verdict, then open a PR"
+    );
 }
 
 #[test]
