@@ -180,6 +180,11 @@ jobs:
             exit 1
           fi
 
+      - name: Cargo bin manifest parity
+        run: |
+          set -euxo pipefail
+          bash scripts/check_cargo_bin_parity.sh
+
       - name: No-mock code guard
         run: |
           set -euxo pipefail
