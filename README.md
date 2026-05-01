@@ -2423,183 +2423,22 @@ src/
 
 ## Documentation Index
 
-Each entry below includes the document name, purpose, bottom-line takeaway, and direct link.
+This index intentionally lists the load-bearing docs, not every generated
+snapshot under `docs/`. Historical planning and review material lives in the
+[planning archive](docs/planning/); see
+[the docs classification record](docs/docs-classification-bd-we34i1.md) for the
+broader inventory.
 
-| Category | What it covers | Jump |
-|---|---|---|
-| Extension Ecosystem | extension architecture, corpus, catalogs, conformance, compatibility | [Go](#1-extension-ecosystem) |
-| Core Ops and UX | governance, CI/QA ops, keybindings, prompts, packaging, model/config UX, drop-in migration/certification | [Go](#2-core-ops-and-ux) |
-| Provider Subsystem | provider audits, setup contracts, parity and remediation artifacts | [Go](#3-provider-subsystem) |
-| QA, Schemas, Security, Platform | release/QA runbooks, schemas, security baselines, platform guides | [Go](#4-qa-schemas-security-and-platform) |
-
-### 1. Extension Ecosystem
-
-- `docs/BRANCH_PROTECTION.md` - Purpose: define branch protection policy and enforcement rules. Bottom line: CI and review gates are mandatory for mainline integrity. Link: [View](docs/BRANCH_PROTECTION.md)
-- `docs/EXTENSION_CANDIDATES.md` - Purpose: catalog candidate extensions for inclusion/testing. Bottom line: start extension triage from this longlist. Link: [View](docs/EXTENSION_CANDIDATES.md)
-- `docs/EXTENSION_CAPTURE_SCENARIOS.md` - Purpose: define extension capture and replay scenarios. Bottom line: use these scenarios for deterministic extension behavior capture. Link: [View](docs/EXTENSION_CAPTURE_SCENARIOS.md)
-- `docs/EXTENSION_POPULARITY_CRITERIA.md` - Purpose: specify how extension popularity is scored. Bottom line: popularity decisions follow explicit ranking criteria. Link: [View](docs/EXTENSION_POPULARITY_CRITERIA.md)
-- `docs/EXTENSION_REFRESH_CHECKLIST.md` - Purpose: operational checklist for extension corpus refreshes. Bottom line: follow this to update corpus safely and repeatably. Link: [View](docs/EXTENSION_REFRESH_CHECKLIST.md)
-- `docs/EXTENSION_SAMPLE.md` - Purpose: human-readable sample extension contract. Bottom line: reference this when authoring new extension packages. Link: [View](docs/EXTENSION_SAMPLE.md)
-- `docs/EXTENSION_SAMPLING_MATRIX.md` - Purpose: define extension sampling strategy and strata. Bottom line: test coverage comes from this sampling matrix. Link: [View](docs/EXTENSION_SAMPLING_MATRIX.md)
-- `docs/LEGACY_EXTENSION_RUNNER.md` - Purpose: explain legacy extension runner behavior and constraints. Bottom line: use for compatibility context, not new runtime design. Link: [View](docs/LEGACY_EXTENSION_RUNNER.md)
-- `docs/PIJS_PROOF_REPORT.md` - Purpose: provide formal evidence for PiJS runtime properties. Bottom line: PiJS eliminates ambient authority by design. Link: [View](docs/PIJS_PROOF_REPORT.md)
-- `docs/TEST_COVERAGE_MATRIX.md` - Purpose: map modules to test suites and coverage status. Bottom line: this is the coverage gap dashboard. Link: [View](docs/TEST_COVERAGE_MATRIX.md)
-- `docs/capability-prompts.md` - Purpose: document capability prompt UX and policy semantics. Bottom line: prompts are policy artifacts, not ad hoc UI. Link: [View](docs/capability-prompts.md)
-- `docs/ci-operator-runbook.md` - Purpose: CI operations runbook for maintainers. Bottom line: use this for incident response in CI pipelines. Link: [View](docs/ci-operator-runbook.md)
-- `docs/conformance-operator-playbook.md` - Purpose: operating guide for conformance campaigns. Bottom line: run conformance with this playbook for reproducible results. Link: [View](docs/conformance-operator-playbook.md)
-- `docs/coverage-baseline-map.json` - Purpose: machine-readable mapping of coverage baselines. Bottom line: automation should use this as baseline source of truth. Link: [View](docs/coverage-baseline-map.json)
-- `docs/development.md` - Purpose: contributor-facing development workflow reference. Bottom line: this is the canonical local dev setup guide. Link: [View](docs/development.md)
-- `docs/e2e_scenario_matrix.json` - Purpose: machine-readable matrix of E2E scenarios. Bottom line: E2E scope and expected flows are defined here. Link: [View](docs/e2e_scenario_matrix.json)
-- `docs/evidence-contract-schema.json` - Purpose: schema for evidence artifacts and logs. Bottom line: evidence producers must conform to this contract. Link: [View](docs/evidence-contract-schema.json)
-- `docs/ext-compat.md` - Purpose: explain extension compatibility posture and boundaries. Bottom line: this is the quick compatibility reference. Link: [View](docs/ext-compat.md)
-- `docs/extension-api-matrix.json` - Purpose: API surface matrix for extension host/runtime calls. Bottom line: use this to see supported extension APIs at a glance. Link: [View](docs/extension-api-matrix.json)
-- `docs/extension-architecture.md` - Purpose: architecture deep dive for extension runtime internals. Bottom line: this is the primary extension technical design doc. Link: [View](docs/extension-architecture.md)
-- `docs/extension-artifact-provenance.json` - Purpose: provenance metadata for extension artifacts. Bottom line: artifact trust and lineage are tracked here. Link: [View](docs/extension-artifact-provenance.json)
-- `docs/extension-candidate-pool.json` - Purpose: machine-readable candidate pool for extension selection. Bottom line: ingestion/selection jobs should read from this pool. Link: [View](docs/extension-candidate-pool.json)
-- `docs/extension-catalog.json` - Purpose: master extension catalog and status metadata. Bottom line: this is the canonical extension inventory. Link: [View](docs/extension-catalog.json)
-- `docs/extension-catalog.schema.json` - Purpose: schema for validating extension catalog documents. Bottom line: catalog updates must pass this schema. Link: [View](docs/extension-catalog.schema.json)
-- `docs/extension-code-search-inventory.json` - Purpose: inventory of code-search findings across extension repos. Bottom line: use this as raw search evidence. Link: [View](docs/extension-code-search-inventory.json)
-- `docs/extension-code-search-summary.json` - Purpose: summarized results from extension code-search inventory. Bottom line: top code-search findings are condensed here. Link: [View](docs/extension-code-search-summary.json)
-- `docs/extension-collections.json` - Purpose: grouped extension collections by theme/scope. Bottom line: collection-level planning starts here. Link: [View](docs/extension-collections.json)
-- `docs/extension-compatibility-matrix.md` - Purpose: compatibility matrix for extension runtime support levels. Bottom line: check this before claiming compatibility gaps. Link: [View](docs/extension-compatibility-matrix.md)
-- `docs/extension-conformance-matrix.json` - Purpose: machine-readable extension conformance outcomes. Bottom line: this is the conformance truth table for automation. Link: [View](docs/extension-conformance-matrix.json)
-- `docs/extension-conformance-test-plan.json` - Purpose: test planning artifact for extension conformance. Bottom line: conformance execution should follow this plan. Link: [View](docs/extension-conformance-test-plan.json)
-- `docs/extension-curated-list-summary.json` - Purpose: summary of curated extension subsets. Bottom line: use for quick curated corpus decisions. Link: [View](docs/extension-curated-list-summary.json)
-- `docs/extension-entry-scan.json` - Purpose: scan results for extension entrypoint detection. Bottom line: extension entry assumptions are validated here. Link: [View](docs/extension-entry-scan.json)
-- `docs/extension-inclusion-list.json` - Purpose: explicit inclusion list for extension sets. Bottom line: this controls what is in-scope for runs. Link: [View](docs/extension-inclusion-list.json)
-- `docs/extension-individual-enumeration.json` - Purpose: per-extension enumeration details and metadata. Bottom line: drill into individual extension records here. Link: [View](docs/extension-individual-enumeration.json)
-- `docs/extension-license-report.json` - Purpose: license audit results for extension corpus. Bottom line: licensing risks and statuses are captured here. Link: [View](docs/extension-license-report.json)
-- `docs/extension-master-catalog.json` - Purpose: high-authority upstream extension catalog snapshot. Bottom line: this anchors full-corpus sync and provenance checks. Link: [View](docs/extension-master-catalog.json)
-- `docs/extension-npm-scan-summary.json` - Purpose: summary of npm-based extension scanning outputs. Bottom line: npm scan posture is summarized here. Link: [View](docs/extension-npm-scan-summary.json)
-- `docs/extension-onboarding-queue.json` - Purpose: machine-readable onboarding queue for extension work. Bottom line: queue automation should consume this file. Link: [View](docs/extension-onboarding-queue.json)
-- `docs/extension-onboarding-queue.md` - Purpose: human-readable extension onboarding queue and context. Bottom line: this is the operator queue board. Link: [View](docs/extension-onboarding-queue.md)
-- `docs/extension-priority-summary.json` - Purpose: summary of extension prioritization signals. Bottom line: priority rollups are centralized here. Link: [View](docs/extension-priority-summary.json)
-- `docs/extension-priority.json` - Purpose: detailed extension priority scoring data. Bottom line: per-extension prioritization is machine-readable here. Link: [View](docs/extension-priority.json)
-- `docs/extension-registry.md` - Purpose: document extension registry model and usage. Bottom line: registry behavior and expectations are defined here. Link: [View](docs/extension-registry.md)
-- `docs/extension-repo-search-summary.json` - Purpose: summary of repository-level extension discovery searches. Bottom line: repo discovery outcomes are consolidated here. Link: [View](docs/extension-repo-search-summary.json)
-- `docs/extension-research-playbook.json` - Purpose: machine-readable playbook for extension research workflow. Bottom line: research execution steps and outputs are formalized here. Link: [View](docs/extension-research-playbook.json)
-- `docs/extension-runtime-threat-model.md` - Purpose: runtime-focused extension threat model with controls/tests. Bottom line: this maps concrete runtime abuse paths to mitigations. Link: [View](docs/extension-runtime-threat-model.md)
-- `docs/extension-sample.json` - Purpose: machine-readable extension sample payload/spec. Bottom line: use this as canonical sample JSON contract. Link: [View](docs/extension-sample.json)
-- `docs/extension-tiered-corpus.json` - Purpose: tiered corpus composition for extension testing. Bottom line: corpus tiers and membership are defined here. Link: [View](docs/extension-tiered-corpus.json)
-- `docs/extension-tiered-summary.json` - Purpose: summary of tiered corpus coverage and counts. Bottom line: corpus tier health is summarized here. Link: [View](docs/extension-tiered-summary.json)
-- `docs/extension-troubleshooting.md` - Purpose: troubleshooting guide specific to extension runtime issues. Bottom line: start here for extension failures and policy denials. Link: [View](docs/extension-troubleshooting.md)
-- `docs/extension-validated-dedup.json` - Purpose: deduplicated validated extension list. Bottom line: use this to avoid duplicate extension artifacts. Link: [View](docs/extension-validated-dedup.json)
-
-### 2. Core Ops and UX
-
-- `docs/flake-triage-policy.md` - Purpose: policy for test flake detection and triage handling. Bottom line: flakes must be classified and handled via this rubric. Link: [View](docs/flake-triage-policy.md)
-- `docs/keybindings.md` - Purpose: keybinding reference for interactive TUI usage. Bottom line: this is the operator shortcut map. Link: [View](docs/keybindings.md)
-- `docs/models.md` - Purpose: model catalog behavior, selection, and overrides. Bottom line: model resolution logic is documented here. Link: [View](docs/models.md)
-- `docs/non-mock-rubric.json` - Purpose: rubric defining non-mock testing expectations. Bottom line: use this to gate real-behavior evidence quality. Link: [View](docs/non-mock-rubric.json)
-- `docs/packages.md` - Purpose: package installation and package-content conventions. Bottom line: package usage and structure are defined here. Link: [View](docs/packages.md)
-- `docs/asupersync-leverage-inventory.md` - Purpose: implementation-grade inventory of where additional Asupersync leverage is genuinely high-value in Pi core surfaces. Bottom line: start here before threading inherited `AgentCx` or replacing raw thread islands. Link: [View](docs/asupersync-leverage-inventory.md)
-- `docs/contracts/dropin-certification-contract.json` - Purpose: strict drop-in certification contract and gate thresholds. Bottom line: strict replacement messaging is controlled by this contract and its hard gates. Link: [View](docs/contracts/dropin-certification-contract.json)
-- `docs/evidence/dropin-parity-gap-ledger.json` - Purpose: machine-readable ledger of known drop-in parity gaps and severity. Bottom line: unresolved critical/high gaps block strict replacement messaging. Link: [View](docs/evidence/dropin-parity-gap-ledger.json)
-- `docs/integrator-migration-playbook.md` - Purpose: operator/integrator migration and rollback playbook for moving from TypeScript Pi to Rust Pi. Bottom line: use this to run staged, evidence-backed migrations. Link: [View](docs/integrator-migration-playbook.md)
-- `docs/parity-certification.json` - Purpose: machine-readable parity progress snapshot. Bottom line: informational status only; strict replacement release claims remain controlled by the drop-in contract and parity-gap closure status. Link: [View](docs/parity-certification.json)
-- `docs/program-governance.md` - Purpose: governance model for roadmap, gates, and ownership. Bottom line: governance decisions and responsibilities are defined here. Link: [View](docs/program-governance.md)
-- `docs/prompt-templates.md` - Purpose: prompt template system and usage guide. Bottom line: reusable prompt behaviors are managed via this doc. Link: [View](docs/prompt-templates.md)
-- `docs/sdk.md` - Purpose: SDK cookbook and migration guide for embedding Pi programmatically. Bottom line: use this for copy/paste Rust equivalents of TypeScript SDK workflows. Link: [View](docs/sdk.md)
-- `docs/integrator-migration-playbook.md` - Purpose: step-by-step migration and compatibility validation runbook for downstream integrators moving from TypeScript Pi to Rust Pi. Bottom line: follow this to execute and evidence a go/no-go migration decision safely. Link: [View](docs/integrator-migration-playbook.md)
-
-### 3. Provider Subsystem
-
-- `docs/provider-audit-evidence-index.json` - Purpose: index of provider audit evidence artifacts. Bottom line: audit traceability begins with this index. Link: [View](docs/provider-audit-evidence-index.json)
-- `docs/provider-audit-reconciliation-ledger.json` - Purpose: ledger of provider audit reconciliation decisions. Bottom line: discrepancies and resolutions are recorded here. Link: [View](docs/provider-audit-reconciliation-ledger.json)
-- `docs/provider-auth-crosswalk.json` - Purpose: provider auth alias/env-key crosswalk. Bottom line: credential resolution mapping is centralized here. Link: [View](docs/provider-auth-crosswalk.json)
-- `docs/provider-auth-failure-signatures.json` - Purpose: known provider auth failure signatures and fingerprints. Bottom line: diagnose auth failures by matching this catalog. Link: [View](docs/provider-auth-failure-signatures.json)
-- `docs/provider-auth-playbook-validation.json` - Purpose: validation outcomes for provider auth playbook coverage. Bottom line: auth playbook quality is measured here. Link: [View](docs/provider-auth-playbook-validation.json)
-- `docs/provider-auth-redaction-diagnostics.json` - Purpose: diagnostics for provider auth redaction behavior. Bottom line: redaction correctness and gaps are captured here. Link: [View](docs/provider-auth-redaction-diagnostics.json)
-- `docs/provider-auth-troubleshooting.md` - Purpose: troubleshooting guide for provider auth issues. Bottom line: use this first for provider key/auth problems. Link: [View](docs/provider-auth-troubleshooting.md)
-- `docs/provider-baseline-audit.json` - Purpose: machine-readable baseline provider audit data. Bottom line: structured provider baseline evidence lives here. Link: [View](docs/provider-baseline-audit.json)
-- `docs/provider-baseline-audit.md` - Purpose: narrative baseline provider audit report. Bottom line: high-level provider gap picture is explained here. Link: [View](docs/provider-baseline-audit.md)
-- `docs/provider-canonical-id-policy.json` - Purpose: machine-readable canonical provider ID policy. Bottom line: provider ID normalization rules are defined here. Link: [View](docs/provider-canonical-id-policy.json)
-- `docs/provider-canonical-id-policy.md` - Purpose: human-readable canonical provider ID policy. Bottom line: this is the normative provider naming policy. Link: [View](docs/provider-canonical-id-policy.md)
-- `docs/provider-canonical-id-table.json` - Purpose: canonical provider ID lookup table. Bottom line: use this for deterministic provider ID mapping. Link: [View](docs/provider-canonical-id-table.json)
-- `docs/provider-cerebras-capability-profile.json` - Purpose: Cerebras provider capability profile. Bottom line: Cerebras support envelope and constraints are here. Link: [View](docs/provider-cerebras-capability-profile.json)
-- `docs/provider-cerebras-setup.json` - Purpose: Cerebras setup/config contract. Bottom line: configure Cerebras using this artifact. Link: [View](docs/provider-cerebras-setup.json)
-- `docs/provider-closure-truth-table.json` - Purpose: closure truth table for provider audit status. Bottom line: this is the provider closure scoreboard. Link: [View](docs/provider-closure-truth-table.json)
-- `docs/provider-config-examples.json` - Purpose: machine-readable provider config examples. Bottom line: automation-ready sample configs live here. Link: [View](docs/provider-config-examples.json)
-- `docs/provider-config-examples.md` - Purpose: human-readable provider config examples. Bottom line: copy from here when setting up providers. Link: [View](docs/provider-config-examples.md)
-- `docs/provider-discrepancy-classification.json` - Purpose: taxonomy for provider discrepancy classes. Bottom line: classify provider mismatches with this schema. Link: [View](docs/provider-discrepancy-classification.json)
-- `docs/provider-discrepancy-ledger.json` - Purpose: ledger of concrete provider discrepancies. Bottom line: discrepancy history and status are tracked here. Link: [View](docs/provider-discrepancy-ledger.json)
-- `docs/provider-gaps-audit-report.json` - Purpose: aggregate provider gap audit report. Bottom line: provider parity gaps are quantified here. Link: [View](docs/provider-gaps-audit-report.json)
-- `docs/provider-gaps-test-matrix.json` - Purpose: test matrix for closing provider gaps. Bottom line: missing provider tests are enumerated here. Link: [View](docs/provider-gaps-test-matrix.json)
-- `docs/provider-gate-compiler-report.json` - Purpose: provider gate report from compiler/build checks. Bottom line: compile-time provider gate status is here. Link: [View](docs/provider-gate-compiler-report.json)
-- `docs/provider-gate-e2e-report.json` - Purpose: provider gate report from end-to-end tests. Bottom line: provider E2E gate results are captured here. Link: [View](docs/provider-gate-e2e-report.json)
-- `docs/provider-gate-tests-report.json` - Purpose: consolidated provider test gate report. Bottom line: provider test gate pass/fail view is here. Link: [View](docs/provider-gate-tests-report.json)
-- `docs/provider-gate-triage-matrix.json` - Purpose: triage matrix for provider gate failures. Bottom line: use this to route provider gate failures fast. Link: [View](docs/provider-gate-triage-matrix.json)
-- `docs/provider-gate-ubs-report.json` - Purpose: UBS scan output for provider gate runs. Bottom line: provider bug-scan findings are recorded here. Link: [View](docs/provider-gate-ubs-report.json)
-- `docs/provider-groq-capability-profile.json` - Purpose: Groq provider capability profile. Bottom line: Groq support/limits are defined here. Link: [View](docs/provider-groq-capability-profile.json)
-- `docs/provider-groq-setup.json` - Purpose: Groq provider setup contract. Bottom line: configure Groq following this spec. Link: [View](docs/provider-groq-setup.json)
-- `docs/provider-implementation-modes.json` - Purpose: provider implementation mode classification. Bottom line: know which providers are native/bridged/mock from this file. Link: [View](docs/provider-implementation-modes.json)
-- `docs/provider-kimi-capability-profile.json` - Purpose: Kimi provider capability profile. Bottom line: Kimi behavior envelope is documented here. Link: [View](docs/provider-kimi-capability-profile.json)
-- `docs/provider-kimi-setup.json` - Purpose: Kimi provider setup contract. Bottom line: use this for Kimi integration setup. Link: [View](docs/provider-kimi-setup.json)
-- `docs/provider-longtail-evidence.md` - Purpose: evidence report for longtail provider coverage. Bottom line: longtail provider support claims are justified here. Link: [View](docs/provider-longtail-evidence.md)
-- `docs/provider-migration-guide.md` - Purpose: migration guide for provider model changes. Bottom line: follow this when migrating provider integrations. Link: [View](docs/provider-migration-guide.md)
-- `docs/provider-native-parity-report.json` - Purpose: report on native provider parity status. Bottom line: native parity progress is measured here. Link: [View](docs/provider-native-parity-report.json)
-- `docs/provider-onboarding-checklist.md` - Purpose: onboarding checklist for adding new providers. Bottom line: provider additions must pass this checklist. Link: [View](docs/provider-onboarding-checklist.md)
-- `docs/provider-onboarding-playbook.md` - Purpose: operational playbook for provider onboarding lifecycle. Bottom line: this is the end-to-end onboarding runbook. Link: [View](docs/provider-onboarding-playbook.md)
-- `docs/provider-openrouter-auth-contract.json` - Purpose: OpenRouter auth behavior contract. Bottom line: OpenRouter auth resolution must match this contract. Link: [View](docs/provider-openrouter-auth-contract.json)
-- `docs/provider-openrouter-capability-profile.json` - Purpose: OpenRouter capability profile. Bottom line: OpenRouter feature boundaries are documented here. Link: [View](docs/provider-openrouter-capability-profile.json)
-- `docs/provider-openrouter-dynamic-models-contract.json` - Purpose: contract for OpenRouter dynamic model behavior. Bottom line: dynamic model handling rules are defined here. Link: [View](docs/provider-openrouter-dynamic-models-contract.json)
-- `docs/provider-openrouter-model-registry-contract.json` - Purpose: OpenRouter model registry contract and expectations. Bottom line: registry consistency requirements are here. Link: [View](docs/provider-openrouter-model-registry-contract.json)
-- `docs/provider-openrouter-setup.json` - Purpose: OpenRouter setup/config contract. Bottom line: configure OpenRouter from this artifact. Link: [View](docs/provider-openrouter-setup.json)
-- `docs/provider-parity-checklist.json` - Purpose: checklist for provider parity closure criteria. Bottom line: parity completion gates are encoded here. Link: [View](docs/provider-parity-checklist.json)
-- `docs/provider-parity-reconciliation-report.json` - Purpose: report on provider parity reconciliations. Bottom line: reconciliation outcomes and rationale are here. Link: [View](docs/provider-parity-reconciliation-report.json)
-- `docs/provider-parity-reconciliation.json` - Purpose: machine-readable parity reconciliation ledger. Bottom line: this is the structured parity reconciliation record. Link: [View](docs/provider-parity-reconciliation.json)
-- `docs/provider-qwen-capability-profile.json` - Purpose: Qwen provider capability profile. Bottom line: Qwen support/constraints are captured here. Link: [View](docs/provider-qwen-capability-profile.json)
-- `docs/provider-qwen-setup.json` - Purpose: Qwen provider setup contract. Bottom line: configure Qwen using this file. Link: [View](docs/provider-qwen-setup.json)
-- `docs/provider-remediation-manifest.json` - Purpose: manifest of provider remediation actions. Bottom line: remediation backlog and ownership are tracked here. Link: [View](docs/provider-remediation-manifest.json)
-- `docs/provider-remediation-routing-validation.json` - Purpose: validation of provider remediation routing logic. Bottom line: routing correctness is evidenced here. Link: [View](docs/provider-remediation-routing-validation.json)
-- `docs/provider-support-baseline-audit.md` - Purpose: baseline audit of declared provider support. Bottom line: support claims are grounded by this audit. Link: [View](docs/provider-support-baseline-audit.md)
-- `docs/provider-test-matrix-validation-report.json` - Purpose: validation report for provider test matrix completeness. Bottom line: provider test matrix health is measured here. Link: [View](docs/provider-test-matrix-validation-report.json)
-- `docs/provider-test-obligations.md` - Purpose: define provider-specific test obligations and gates. Bottom line: this is the provider test contract. Link: [View](docs/provider-test-obligations.md)
-- `docs/provider-upstream-catalog-snapshot.json` - Purpose: machine-readable snapshot of upstream provider catalogs. Bottom line: upstream drift detection starts from this snapshot. Link: [View](docs/provider-upstream-catalog-snapshot.json)
-- `docs/provider-upstream-catalog-snapshot.md` - Purpose: narrative summary of upstream provider snapshot changes. Bottom line: upstream provider changes are explained here. Link: [View](docs/provider-upstream-catalog-snapshot.md)
-- `docs/provider_e2e_artifact_contract.json` - Purpose: artifact contract for provider E2E evidence. Bottom line: provider E2E artifacts must satisfy this schema. Link: [View](docs/provider_e2e_artifact_contract.json)
-- `docs/providers.md` - Purpose: provider architecture, behavior, and usage reference. Bottom line: this is the primary provider subsystem guide. Link: [View](docs/providers.md)
-
-### 4. QA, Schemas, Security, and Platform
-
-- `docs/qa-runbook.md` - Purpose: QA operating runbook across suites and artifacts. Bottom line: use this for repeatable QA execution. Link: [View](docs/qa-runbook.md)
-- `docs/releasing.md` - Purpose: release process and checklist documentation. Bottom line: follow this for consistent, safe releases. Link: [View](docs/releasing.md)
-- `docs/rpc.md` - Purpose: RPC mode protocol and usage contract. Bottom line: this is the wire-level RPC integration guide. Link: [View](docs/rpc.md)
-- `docs/schema/extension_manifest.json` - Purpose: JSON schema for extension manifests. Bottom line: extension manifest validation must pass this schema. Link: [View](docs/schema/extension_manifest.json)
-- `docs/schema/extension_protocol.json` - Purpose: JSON schema for extension protocol messages. Bottom line: extension message contracts are formalized here. Link: [View](docs/schema/extension_protocol.json)
-- `docs/schema/mock_spec.json` - Purpose: schema for mock/test spec fixtures. Bottom line: mock fixtures should conform to this contract. Link: [View](docs/schema/mock_spec.json)
-- `docs/schema/runtime_hostcall_telemetry.json` - Purpose: JSON schema for runtime hostcall telemetry events. Bottom line: hostcall telemetry producers must conform to this schema. Link: [View](docs/schema/runtime_hostcall_telemetry.json)
-- `docs/sec_traceability_matrix.json` - Purpose: machine-readable security requirement traceability matrix. Bottom line: security coverage and test mappings are tracked here. Link: [View](docs/sec_traceability_matrix.json)
-- `docs/sec_traceability_matrix.md` - Purpose: narrative security traceability matrix with requirement-to-test linkage. Bottom line: human-readable security coverage status is documented here. Link: [View](docs/sec_traceability_matrix.md)
-- `docs/security/baseline-audit.md` - Purpose: code-grounded security baseline audit and gap analysis. Bottom line: this is the current security posture snapshot. Link: [View](docs/security/baseline-audit.md)
-- `docs/security/incident-response-runbook.md` - Purpose: incident response procedures for security events. Bottom line: follow this runbook during active security incidents. Link: [View](docs/security/incident-response-runbook.md)
-- `docs/security/incident-runbook.md` - Purpose: incident detection, classification, and handling guide. Bottom line: use this for initial incident triage and escalation. Link: [View](docs/security/incident-runbook.md)
-- `docs/security/invariants.machine.json` - Purpose: machine-checkable security invariant manifest with test mappings. Bottom line: invariant automation should read this file. Link: [View](docs/security/invariants.machine.json)
-- `docs/security/invariants.md` - Purpose: normative security invariants and precedence semantics. Bottom line: this is the SEC-1.2 policy/risk contract. Link: [View](docs/security/invariants.md)
-- `docs/security/lockfile-format.md` - Purpose: lockfile format specification for extension integrity verification. Bottom line: lockfile structure and validation rules are defined here. Link: [View](docs/security/lockfile-format.md)
-- `docs/security/maintenance-playbook.md` - Purpose: security maintenance procedures and scheduled operations. Bottom line: use this for routine security upkeep and policy refresh. Link: [View](docs/security/maintenance-playbook.md)
-- `docs/security/manifest-v2-migration.md` - Purpose: migration guidance from legacy extension manifests to manifest v2 security fields. Bottom line: use this to upgrade manifests without losing capability/policy intent. Link: [View](docs/security/manifest-v2-migration.md)
-- `docs/security/operator-handbook.md` - Purpose: comprehensive operator handbook for security operations. Bottom line: this is the primary security ops reference for day-to-day work. Link: [View](docs/security/operator-handbook.md)
-- `docs/security/operator-quick-reference.md` - Purpose: quick-reference card for security operators. Bottom line: use this cheat sheet for fast lookups during operations. Link: [View](docs/security/operator-quick-reference.md)
-- `docs/security/policy-tuning-guide.md` - Purpose: guide for tuning extension security policies and risk thresholds. Bottom line: policy calibration and adjustment procedures are here. Link: [View](docs/security/policy-tuning-guide.md)
-- `docs/security/runtime-hostcall-telemetry.md` - Purpose: runtime hostcall telemetry design and event catalog. Bottom line: hostcall observability and event semantics are documented here. Link: [View](docs/security/runtime-hostcall-telemetry.md)
-- `docs/security/security-slos.md` - Purpose: quantitative security SLOs, risk budgets, and release/rollback gates. Bottom line: security release readiness is numerically gated here. Link: [View](docs/security/security-slos.md)
-- `docs/security/threat-model.md` - Purpose: formal extension ecosystem threat model. Bottom line: this is the SEC-1.1 attacker and control baseline. Link: [View](docs/security/threat-model.md)
-- `docs/session.md` - Purpose: session model, persistence, and branching semantics. Bottom line: session behavior and storage contracts are here. Link: [View](docs/session.md)
-- `docs/settings.md` - Purpose: settings schema, precedence, and config behavior. Bottom line: configuration behavior is canonicalized here. Link: [View](docs/settings.md)
-- `docs/skills.md` - Purpose: skills system usage and packaging guidance. Bottom line: extend prompt behavior through documented skill contracts. Link: [View](docs/skills.md)
-- `docs/streaming-hostcalls.md` - Purpose: streaming hostcall behavior and lifecycle details. Bottom line: use this to reason about streaming tool execution. Link: [View](docs/streaming-hostcalls.md)
-- `docs/terminal-setup.md` - Purpose: terminal environment setup and ergonomics guidance. Bottom line: recommended terminal configuration is here. Link: [View](docs/terminal-setup.md)
-- `docs/termux.md` - Purpose: Termux-specific setup and runtime guidance. Bottom line: Android/Termux usage is documented here. Link: [View](docs/termux.md)
-- `docs/test_double_inventory.json` - Purpose: inventory of test doubles and mock surfaces. Bottom line: test double usage is auditable via this file. Link: [View](docs/test_double_inventory.json)
-- `docs/testing-policy.md` - Purpose: testing policy, quality bars, and suite expectations. Bottom line: this is the normative test governance doc. Link: [View](docs/testing-policy.md)
-- `docs/themes.md` - Purpose: theme system configuration and customization. Bottom line: terminal rendering themes are documented here. Link: [View](docs/themes.md)
-- `docs/traceability_matrix.json` - Purpose: requirement-to-test traceability matrix. Bottom line: evidence traceability across requirements lives here. Link: [View](docs/traceability_matrix.json)
-- `docs/tree.md` - Purpose: session tree navigation and branching behavior guide. Bottom line: use this to understand conversation tree operations. Link: [View](docs/tree.md)
-- `docs/troubleshooting.md` - Purpose: general troubleshooting guide for common failures. Bottom line: start here for non-extension operational issues. Link: [View](docs/troubleshooting.md)
-- `docs/tui.md` - Purpose: TUI behavior, controls, and rendering notes. Bottom line: interactive UI semantics are defined here. Link: [View](docs/tui.md)
-- `docs/windows.md` - Purpose: Windows-specific installation and runtime guidance. Bottom line: Windows support details are centralized here. Link: [View](docs/windows.md)
-- `docs/wit/extension.wit` - Purpose: WIT interface definition for extension host contracts. Bottom line: typed extension host ABI is defined here. Link: [View](docs/wit/extension.wit)
+| Area | Primary docs |
+|---|---|
+| Getting started and operations | [development](docs/development.md), [terminal setup](docs/terminal-setup.md), [settings](docs/settings.md), [models](docs/models.md), [keybindings](docs/keybindings.md), [packages](docs/packages.md), [troubleshooting](docs/troubleshooting.md), [releasing](docs/releasing.md) |
+| Core runtime surfaces | [session](docs/session.md), [tree](docs/tree.md), [TUI](docs/tui.md), [RPC](docs/rpc.md), [SDK](docs/sdk.md), [skills](docs/skills.md), [prompt templates](docs/prompt-templates.md), [streaming hostcalls](docs/streaming-hostcalls.md) |
+| Drop-in certification and migration | [certification contract](docs/contracts/dropin-certification-contract.json), [certification verdict](docs/evidence/dropin-certification-verdict.json), [parity gap ledger](docs/evidence/dropin-parity-gap-ledger.json), [differential evidence suite](docs/evidence/dropin-differential-evidence-suite.json), [feature inventory](docs/evidence/dropin-feature-inventory-matrix.json), [migration playbook](docs/integrator-migration-playbook.md), [parity snapshot](docs/parity-certification.json), [program governance](docs/program-governance.md) |
+| Extensions | [architecture](docs/extension-architecture.md), [compatibility guide](docs/ext-compat.md), [compatibility matrix](docs/extension-compatibility-matrix.md), [conformance plan](docs/extension-conformance-test-plan.json), [runtime threat model](docs/extension-runtime-threat-model.md), [troubleshooting](docs/extension-troubleshooting.md), [registry](docs/extension-registry.md), [WIT ABI](docs/wit/extension.wit) |
+| Providers | [provider guide](docs/providers.md), [auth troubleshooting](docs/provider-auth-troubleshooting.md), [config examples](docs/provider-config-examples.md), [canonical ID policy](docs/provider-canonical-id-policy.md), [onboarding playbook](docs/provider-onboarding-playbook.md), [test obligations](docs/provider-test-obligations.md), [upstream catalog snapshot](docs/provider-upstream-catalog-snapshot.md), [support baseline audit](docs/provider-support-baseline-audit.md) |
+| QA and evidence | [QA runbook](docs/qa-runbook.md), [testing policy](docs/testing-policy.md), [conformance playbook](docs/conformance-operator-playbook.md), [coverage matrix](docs/TEST_COVERAGE_MATRIX.md), [evidence schema](docs/evidence-contract-schema.json), [coverage baseline map](docs/coverage-baseline-map.json), [E2E scenario matrix](docs/e2e_scenario_matrix.json), [non-mock rubric](docs/non-mock-rubric.json) |
+| Security | [baseline audit](docs/security/baseline-audit.md), [threat model](docs/security/threat-model.md), [security invariants](docs/security/invariants.md), [operator handbook](docs/security/operator-handbook.md), [operator quick reference](docs/security/operator-quick-reference.md), [incident response](docs/security/incident-response-runbook.md), [runtime hostcall telemetry](docs/security/runtime-hostcall-telemetry.md), [security SLOs](docs/security/security-slos.md) |
+| Schemas and machine contracts | [extension manifest schema](docs/schema/extension_manifest.json), [extension protocol schema](docs/schema/extension_protocol.json), [session store v2 contract](docs/schema/session_store_v2_contract.json), [test evidence logging contract](docs/schema/test_evidence_logging_contract.json), [runtime hostcall telemetry schema](docs/schema/runtime_hostcall_telemetry.json), [mock spec schema](docs/schema/mock_spec.json), [CLI surface diff schema](docs/schema/cli-surface-diff.json), [security traceability matrix](docs/sec_traceability_matrix.md) |
 
 ---
 
