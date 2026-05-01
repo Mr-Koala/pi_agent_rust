@@ -338,7 +338,7 @@ else
 fi
 
 # Gate 12: Drop-in certification contract artifact
-DROPIN_CONTRACT="$PROJECT_ROOT/docs/dropin-certification-contract.json"
+DROPIN_CONTRACT="$PROJECT_ROOT/docs/contracts/dropin-certification-contract.json"
 if [[ -f "$DROPIN_CONTRACT" ]]; then
     CONTRACT_CHECK=$(python3 - <<PY
 import json
@@ -394,11 +394,11 @@ PY
             ;;
     esac
 else
-    check_fail "dropin_contract" "docs/dropin-certification-contract.json not found"
+    check_fail "dropin_contract" "docs/contracts/dropin-certification-contract.json not found"
 fi
 
 # Gate 13: Drop-in certification verdict (required for strict claim mode)
-DROPIN_VERDICT="$PROJECT_ROOT/docs/dropin-certification-verdict.json"
+DROPIN_VERDICT="$PROJECT_ROOT/docs/evidence/dropin-certification-verdict.json"
 DROPIN_CHECK=$(python3 - <<PY
 import json
 import os
@@ -431,9 +431,9 @@ expected_schema = spec.get("schema", "pi.dropin.certification_verdict.v1")
 
 if not verdict_path.is_file():
     if strict_required:
-        print("fail|missing docs/dropin-certification-verdict.json in strict drop-in mode")
+        print("fail|missing docs/evidence/dropin-certification-verdict.json in strict drop-in mode")
     else:
-        print("warn|docs/dropin-certification-verdict.json not present (strict drop-in mode disabled)")
+        print("warn|docs/evidence/dropin-certification-verdict.json not present (strict drop-in mode disabled)")
     raise SystemExit(0)
 
 try:

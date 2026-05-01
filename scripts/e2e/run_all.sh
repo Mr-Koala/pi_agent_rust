@@ -10299,7 +10299,7 @@ strict_replacement_blocking_reasons: list[str] = []
 requested_claim_tier_blocking_reasons: list[str] = []
 requested_claim_tier_allowed = False
 strict_verdict_required = "CERTIFIED"
-strict_verdict_path = project_root / "docs" / "dropin-certification-verdict.json"
+strict_verdict_path = project_root / "docs" / "evidence" / "dropin-certification-verdict.json"
 strict_verdict_observed = ""
 strict_verdict_schema = ""
 strict_verdict_schema_ok = False
@@ -10978,7 +10978,7 @@ if isinstance(franken_node_mission_contract, dict):
         ),
         strict=False,
         remediation=(
-            "Generate docs/dropin-certification-verdict.json with "
+            "Generate docs/evidence/dropin-certification-verdict.json with "
             "overall_verdict=CERTIFIED before enabling strict runtime-replacement claims."
         ),
     )

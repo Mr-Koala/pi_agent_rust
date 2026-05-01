@@ -1356,7 +1356,7 @@ fn franken_node_mission_contract_forbidden_claims_cover_strict_node_and_bun_lang
     );
     assert_eq!(
         release_policy["strict_claim_verdict_artifact"].as_str(),
-        Some("docs/dropin-certification-verdict.json"),
+        Some("docs/evidence/dropin-certification-verdict.json"),
         "strict_claim_verdict_artifact must point at drop-in certification verdict"
     );
     assert_eq!(
@@ -1451,7 +1451,7 @@ fn franken_node_mission_contract_tier_mapping_declares_required_checks_and_phase
         .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
         .collect();
     for artifact in [
-        "docs/dropin-certification-verdict.json",
+        "docs/evidence/dropin-certification-verdict.json",
         "docs/franken-node-kernel-extraction-boundary-manifest.json",
         "docs/franken-node-package-interop-contract.json",
         "docs/franken-node-runtime-substrate-contract.json",

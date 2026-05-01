@@ -7,7 +7,7 @@
   "summary": "Informational implementation snapshot only. Strict drop-in certification is not granted while hard-gate drop-in parity domains remain open.",
   "release_claim_status": {
     "strict_dropin_allowed": false,
-    "gate_contract": "docs/dropin-certification-contract.json",
+    "gate_contract": "docs/contracts/dropin-certification-contract.json",
     "verdict_artifact": "docs/evidence/dropin-certification-verdict.json",
     "blocking_reason": "Open critical/high parity gaps across CLI, JSON/RPC, SDK, config/env, session/errors, integration I/O, differential-testing, and quality-gates."
   },

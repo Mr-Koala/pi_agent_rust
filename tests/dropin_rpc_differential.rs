@@ -337,15 +337,16 @@ impl RpcDifferentialTester {
             Ok(Ok(first_line)) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                if let Ok(response) = serde_json::from_str::<Value>(first_line.trim_end()) {
-                    Ok(response)
-                } else {
-                    Ok(json!({
-                        "type": "response",
-                        "success": false,
-                        "error": format!("Failed to parse response: {first_line}")
-                    }))
-                }
+                serde_json::from_str::<Value>(first_line.trim_end()).map_or_else(
+                    |_| {
+                        Ok(json!({
+                            "type": "response",
+                            "success": false,
+                            "error": format!("Failed to parse response: {first_line}")
+                        }))
+                    },
+                    Ok,
+                )
             }
             Ok(Err(error)) => {
                 let _ = child.kill();

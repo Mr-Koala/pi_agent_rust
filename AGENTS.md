@@ -115,8 +115,8 @@ We do not care about backwards compatibility—we're in early development with n
 
 When editing docs, release notes, or user-facing copy:
 
-- Do not describe Pi Rust as a strict drop-in replacement unless `docs/dropin-certification-contract.json` hard gates are satisfied.
-- Treat `docs/dropin-certification-verdict.json` as the release claim gate: strict replacement language requires `overall_verdict = CERTIFIED`.
+- Do not describe Pi Rust as a strict drop-in replacement unless `docs/contracts/dropin-certification-contract.json` hard gates are satisfied.
+- Treat `docs/evidence/dropin-certification-verdict.json` as the release claim gate: strict replacement language requires `overall_verdict = CERTIFIED`.
 - Treat `docs/parity-certification.json` as informational progress evidence only; it does not override release-gate policy.
 
 ---

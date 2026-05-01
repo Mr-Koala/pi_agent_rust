@@ -18,7 +18,7 @@ Before migration, pin these artifacts as your source of truth:
 - Baseline snapshot: `docs/dropin-upstream-baseline.json`
 - Surface inventory: `docs/dropin-feature-inventory-matrix.json`
 - Gap ledger: `docs/dropin-parity-gap-ledger.json`
-- Certification gates: `docs/dropin-certification-contract.json`
+- Certification gates: `docs/contracts/dropin-certification-contract.json`
 - Certification verdict artifact (strict claim gate): `docs/evidence/dropin-certification-verdict.json`
 - Current parity status snapshot (informational): `docs/parity-certification.json`
 
@@ -238,7 +238,7 @@ If compatibility fails in canary or production:
 - `docs/dropin-upstream-baseline.json`
 - `docs/dropin-feature-inventory-matrix.json`
 - `docs/dropin-parity-gap-ledger.json`
-- `docs/dropin-certification-contract.json`
+- `docs/contracts/dropin-certification-contract.json`
 - `docs/evidence/dropin-certification-verdict.json`
 - `docs/parity-certification.json`
 - `docs/rpc.md`

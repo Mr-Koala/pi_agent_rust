@@ -401,7 +401,7 @@ PY
 ### Drop-in certification contract gate (bd-35t7i)
 
 Before release messaging can claim strict drop-in parity, evaluate
-`docs/dropin-certification-contract.json` and emit
+`docs/contracts/dropin-certification-contract.json` and emit
 `docs/evidence/dropin-certification-verdict.json` (`pi.dropin.certification_verdict.v1`).
 
 Blocking rule:

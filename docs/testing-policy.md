@@ -335,7 +335,7 @@ cargo test --test ci_full_suite_gate -- full_certification --nocapture --exact
 ```
 
 **Drop-in contract gate (bd-35t7i):** strict drop-in release language is only allowed when
-`docs/dropin-certification-contract.json` evaluates to all hard gates `pass` and the emitted
+`docs/contracts/dropin-certification-contract.json` evaluates to all hard gates `pass` and the emitted
 `docs/evidence/dropin-certification-verdict.json` has `overall_verdict = CERTIFIED`.
 Operational incident response for parity regressions is documented in
 `docs/ci-operator-runbook.md` under **Parity Incident Response (DROPIN-162)**.

@@ -276,7 +276,7 @@ Collect and attach these artifacts to the incident bead and Agent Mail thread:
 - `tests/full_suite_gate/full_suite_events.jsonl`
 - `tests/full_suite_gate/full_suite_report.md`
 - `tests/evidence_bundle/index.json`
-- `docs/dropin-certification-contract.json`
+- `docs/contracts/dropin-certification-contract.json`
 - `docs/evidence/dropin-certification-verdict.json` (if present in the run)
 
 ### Response flow

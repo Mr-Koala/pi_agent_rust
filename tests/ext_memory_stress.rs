@@ -93,14 +93,16 @@ fn output_dir() -> PathBuf {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                repo_root.join(path)
-            }
-        })
-        .unwrap_or_else(|| repo_root.join("target"));
+        .map_or_else(
+            || repo_root.join("target"),
+            |path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    repo_root.join(path)
+                }
+            },
+        );
     target_dir.join("perf")
 }
 
