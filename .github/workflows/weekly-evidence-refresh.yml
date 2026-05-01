@@ -83,6 +83,11 @@ jobs:
           set -euxo pipefail
           ./scripts/e2e/run_all.sh --profile ci 2>&1 | tee tests/evidence_refresh/e2e-refresh.log
 
+      - name: Generate maintenance dashboard
+        run: |
+          set -euxo pipefail
+          python3 scripts/generate_maintenance_dashboard.py
+
       - name: Summarize evidence refresh
         if: always()
         run: |
@@ -103,6 +108,7 @@ jobs:
         with:
           name: weekly-evidence-refresh-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            docs/evidence/maintenance-dashboard.json
             tests/evidence_refresh/
             tests/e2e_results/weekly-${{ github.run_id }}-${{ github.run_attempt }}/
           retention-days: 30
@@ -125,10 +131,12 @@ jobs:
             Commands run:
             - `./scripts/perf/orchestrate.sh --profile ci --no-rch --bundle`
             - `./scripts/e2e/run_all.sh --profile ci`
+            - `python3 scripts/generate_maintenance_dashboard.py`
 
             Review request:
             - Apply `$reality-check-for-project` before merging this PR.
             - Confirm generated artifacts still support the README evidence and strict drop-in claims.
+            - Review `docs/evidence/maintenance-dashboard.json` for weekly ledger/bead/verdict burn-down drift.
 
             Artifact logs are attached to the workflow run as `weekly-evidence-refresh-${{ github.run_id }}-${{ github.run_attempt }}`.
           labels: |

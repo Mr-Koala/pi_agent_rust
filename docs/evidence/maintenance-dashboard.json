@@ -1,0 +1,115 @@
+{
+  "generated_at_utc": "2026-05-01T21:10:02Z",
+  "git_commit": "889160cb37763a62ddb8694e3927c17e1d66bfff",
+  "metrics": {
+    "beads": {
+      "by_status": {
+        "closed": 2298,
+        "in_progress": 4,
+        "open": 12,
+        "tombstone": 10
+      },
+      "in_progress_count": 4,
+      "open_by_priority": {
+        "1": 3,
+        "2": 2,
+        "3": 7
+      },
+      "open_by_type": {
+        "docs": 1,
+        "epic": 7,
+        "feature": 2,
+        "task": 2
+      },
+      "open_count": 12,
+      "open_high_priority": [
+        {
+          "id": "bd-fl0p3",
+          "labels": [
+            "depth-verification",
+            "epic",
+            "extensions",
+            "runtime",
+            "statistics"
+          ],
+          "priority": 1,
+          "title": "EPIC: Advanced Runtime Depth Verification \u2014 prove math-driven components are not ceremonial"
+        },
+        {
+          "id": "bd-lnmtp.4",
+          "labels": [
+            "dropin",
+            "epic",
+            "g07",
+            "g08",
+            "g09",
+            "g10",
+            "g11",
+            "parity"
+          ],
+          "priority": 1,
+          "title": "EPIC: Unblock G07\u2013G11 \u2014 config/env, session/error, integration I/O, differential, QA/CI"
+        },
+        {
+          "id": "bd-wz2sg",
+          "labels": [
+            "beads",
+            "ci-gate",
+            "epic",
+            "gap-ledger",
+            "hygiene"
+          ],
+          "priority": 1,
+          "title": "EPIC: Tracker \u2194 Gap Ledger Reconciliation \u2014 eliminate bead completion illusion"
+        }
+      ],
+      "total_count": 2324
+    },
+    "hard_gates": {
+      "blocking_not_pass": [],
+      "generated_at_utc": "2026-05-01T06:01:22Z",
+      "git_commit": "7ea3298ba1a97cc2b3689b64ed8dd786308da5a3",
+      "hard_gate_count": 20,
+      "hard_gate_status_counts": {
+        "pass": 20
+      },
+      "overall_verdict": "CERTIFIED"
+    },
+    "ledger": {
+      "open_by_area": {
+        "extensions": 1
+      },
+      "open_by_severity": {
+        "high": 1
+      },
+      "open_critical_high_count": 1,
+      "open_gaps": [
+        {
+          "area": "extensions",
+          "gap_id": "gap-extension-hook-lifecycle-coverage",
+          "owner_issue_primary": "bd-2xalc",
+          "severity": "high",
+          "status": null
+        }
+      ]
+    }
+  },
+  "schema": "pi.operations.maintenance_dashboard.v1",
+  "source_files": {
+    "beads": ".beads/issues.jsonl",
+    "ledger": "docs/evidence/dropin-parity-gap-ledger.json",
+    "verdict": "docs/evidence/dropin-certification-verdict.json"
+  },
+  "trend_history": [
+    {
+      "date_utc": "2026-05-01",
+      "hard_gate_status_counts": {
+        "pass": 20
+      },
+      "in_progress_beads": 4,
+      "open_beads": 12,
+      "open_critical_high_ledger_gaps": 1,
+      "overall_verdict": "CERTIFIED"
+    }
+  ]
+}
