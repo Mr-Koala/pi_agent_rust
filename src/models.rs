@@ -32,6 +32,7 @@ impl ModelEntry {
             self.model.id.as_str(),
             "gpt-5.1-codex-max"
                 | "gpt-5.2"
+                | "gpt-5.5"
                 | "gpt-5.4"
                 | "gpt-5.2-codex"
                 | "gpt-5.3-codex"
@@ -525,8 +526,16 @@ pub fn model_autocomplete_candidates() -> &'static [ModelAutocompleteCandidate] 
                 description: Some("Claude Sonnet 4.6".to_string()),
             });
             candidates.push(ModelAutocompleteCandidate {
+                slug: "openai/gpt-5.5".to_string(),
+                description: Some("GPT-5.5".to_string()),
+            });
+            candidates.push(ModelAutocompleteCandidate {
                 slug: "openai/gpt-5.4".to_string(),
                 description: Some("GPT-5.4".to_string()),
+            });
+            candidates.push(ModelAutocompleteCandidate {
+                slug: "openai-codex/gpt-5.5".to_string(),
+                description: Some("GPT-5.5 Codex".to_string()),
             });
             candidates.push(ModelAutocompleteCandidate {
                 slug: "openai-codex/gpt-5.4".to_string(),
@@ -1244,6 +1253,51 @@ fn built_in_models(auth: &AuthStorage, mode: ModelRegistryLoadMode) -> Vec<Model
     // conservative seed so listing, lookup, and autocomplete stay current.
     if !models
         .iter()
+        .any(|entry| entry.model.provider == "openai" && entry.model.id == "gpt-5.5")
+    {
+        models.push(ModelEntry {
+            model: Model {
+                id: "gpt-5.5".to_string(),
+                name: "GPT-5.5".to_string(),
+                api: if mode == ModelRegistryLoadMode::Full {
+                    Api::OpenAIResponses.to_string()
+                } else {
+                    "openai-responses".to_string()
+                },
+                provider: "openai".to_string(),
+                base_url: if mode == ModelRegistryLoadMode::Full {
+                    "https://api.openai.com/v1".to_string()
+                } else {
+                    String::new()
+                },
+                reasoning: true,
+                input: vec![InputType::Text, InputType::Image],
+                cost: ModelCost {
+                    input: 0.0,
+                    output: 0.0,
+                    cache_read: 0.0,
+                    cache_write: 0.0,
+                },
+                context_window: 1_000_000,
+                max_tokens: 128_000,
+                headers: HashMap::new(),
+            },
+            api_key: resolve_provider_api_key_cached(
+                auth,
+                "openai",
+                "openai",
+                &mut canonical_api_key_cache,
+                &mut provider_api_key_cache,
+            ),
+            headers: HashMap::new(),
+            auth_header: true,
+            compat: None,
+            oauth_config: None,
+        });
+    }
+
+    if !models
+        .iter()
         .any(|entry| entry.model.provider == "openai" && entry.model.id == "gpt-5.4")
     {
         models.push(ModelEntry {
@@ -1291,6 +1345,51 @@ fn built_in_models(auth: &AuthStorage, mode: ModelRegistryLoadMode) -> Vec<Model
     //
     // The legacy catalog can lag behind upstream model IDs; we use a conservative
     // seed here to keep the default selection stable.
+    if !models
+        .iter()
+        .any(|entry| entry.model.provider == "openai-codex" && entry.model.id == "gpt-5.5")
+    {
+        models.push(ModelEntry {
+            model: Model {
+                id: "gpt-5.5".to_string(),
+                name: "GPT-5.5 Codex".to_string(),
+                api: if mode == ModelRegistryLoadMode::Full {
+                    Api::OpenAICodexResponses.to_string()
+                } else {
+                    "openai-codex-responses".to_string()
+                },
+                provider: "openai-codex".to_string(),
+                base_url: if mode == ModelRegistryLoadMode::Full {
+                    "https://chatgpt.com/backend-api".to_string()
+                } else {
+                    String::new()
+                },
+                reasoning: true,
+                input: vec![InputType::Text, InputType::Image],
+                cost: ModelCost {
+                    input: 0.0,
+                    output: 0.0,
+                    cache_read: 0.0,
+                    cache_write: 0.0,
+                },
+                context_window: 1_000_000,
+                max_tokens: 128_000,
+                headers: HashMap::new(),
+            },
+            api_key: resolve_provider_api_key_cached(
+                auth,
+                "openai-codex",
+                "openai-codex",
+                &mut canonical_api_key_cache,
+                &mut provider_api_key_cache,
+            ),
+            headers: HashMap::new(),
+            auth_header: true,
+            compat: None,
+            oauth_config: None,
+        });
+    }
+
     if !models
         .iter()
         .any(|entry| entry.model.provider == "openai-codex" && entry.model.id == "gpt-5.4")

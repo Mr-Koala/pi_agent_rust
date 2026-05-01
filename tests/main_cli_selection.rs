@@ -258,7 +258,7 @@ fn select_model_and_thinking_uses_scoped_thinking_level_when_cli_unset() {
     let registry = make_registry(&harness, &[("openai", "test-key")]);
     let cli = cli::Cli::parse_from(["pi"]);
 
-    let scoped_models = resolve_model_scope(&["openai/gpt-5.4:low".to_string()], &registry, true);
+    let scoped_models = resolve_model_scope(&["openai/gpt-5.5:low".to_string()], &registry, true);
 
     harness.log().info_ctx("inputs", "Scoped models", |ctx| {
         ctx.push(("count".into(), scoped_models.len().to_string()));
@@ -287,7 +287,7 @@ fn select_model_and_thinking_uses_scoped_thinking_level_when_cli_unset() {
     .expect("select model");
 
     assert_eq!(selection.model_entry.model.provider, "openai");
-    assert_eq!(selection.model_entry.model.id, "gpt-5.4");
+    assert_eq!(selection.model_entry.model.id, "gpt-5.5");
     assert_eq!(selection.thinking_level, ThinkingLevel::Low);
 }
 

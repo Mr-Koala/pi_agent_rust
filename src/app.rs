@@ -773,11 +773,13 @@ fn select_preferred_exact_id_match(candidates: &[ModelEntry]) -> Option<ModelEnt
 fn default_model_from_candidates(candidates: &[ModelEntry]) -> ModelEntry {
     let defaults = [
         // Prefer Codex (ChatGPT OAuth) when available.
+        ("openai-codex", "gpt-5.5"),
         ("openai-codex", "gpt-5.4"),
         ("openai-codex", "gpt-5.3-codex"),
         ("openai-codex", "gpt-5.2-codex"),
         ("openai-codex", "gpt-5.1-codex-max"),
         // Fall back to OpenAI API when configured.
+        ("openai", "gpt-5.5"),
         ("openai", "gpt-5.4"),
         ("openai", "gpt-5.3-codex"),
         ("openai", "gpt-5.2-codex"),
