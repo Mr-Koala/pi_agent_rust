@@ -14,6 +14,11 @@
       "cancelled": true,
       "hook": "session_before_compact",
       "mode": "cancellable"
+    },
+    {
+      "cancelled": true,
+      "hook": "session_before_tree",
+      "mode": "cancellable"
     }
   ],
   "coverage": [
@@ -25,6 +30,21 @@
     {
       "hook": "agent_start",
       "mode": "fire_and_forget",
+      "observed": true
+    },
+    {
+      "hook": "input",
+      "mode": "transform",
+      "observed": true
+    },
+    {
+      "hook": "before_agent_start",
+      "mode": "pre_agent",
+      "observed": true
+    },
+    {
+      "hook": "user_bash",
+      "mode": "first_result",
       "observed": true
     },
     {
@@ -56,12 +76,20 @@
       "hook": "session_before_compact",
       "mode": "cancellable",
       "observed": true
+    },
+    {
+      "hook": "session_before_tree",
+      "mode": "cancellable",
+      "observed": true
     }
   ],
-  "generated_at": "2026-05-01T17:47:22.480Z",
+  "generated_at": "2026-05-01T22:12:34.178Z",
   "ordering_trace": [
     "startup",
     "agent_start",
+    "input:hello:interactive",
+    "before_agent_start:summarize",
+    "user_bash:git status --short",
     "tool_call:read",
     "tool_result:read",
     "agent_end"

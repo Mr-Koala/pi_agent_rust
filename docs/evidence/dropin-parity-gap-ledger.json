@@ -183,32 +183,33 @@
       "gap_id": "gap-extension-hook-lifecycle-coverage",
       "priority_rank": 7,
       "area": "extensions",
-      "mismatch_kind": "unverified_hook_parity",
-      "severity": "high",
+      "mismatch_kind": "resolved",
+      "severity": "resolved",
+      "status": "resolved",
+      "resolution_date": "2026-05-01T22:12:48Z",
       "sources": [
         "docs/dropin-112-feature-inventory-matrix.md#section:10-extension-events-hook-points"
       ],
-      "current_state": "session/agent/user hook points have unresolved parity verification",
-      "user_impact": "Extensions relying on lifecycle hooks can behave differently between TS and Rust.",
-      "owner_issue_primary": "bd-2xalc",
+      "final_state": "Lifecycle hook parity is covered by tests/extensions_event_wiring.rs and the generated lifecycle_hook_parity_matrix.json evidence artifact. The proof covers startup, agent_start, input transforms, before_agent_start system-prompt mutation, user_bash first-result behavior, tool_call/tool_result ordering, agent_end, and cancellable session_before_switch/session_before_fork/session_before_compact/session_before_tree hooks.",
+      "user_impact": "Lifecycle hook parity is now regression-covered for extension startup, user, agent, tool, and session-tree hook families.",
+      "owner_issue_primary": "bd-wz2sg.4",
       "owner_issue_supporting": [
+        "bd-2xalc",
         "bd-3meug",
         "bd-359pl"
       ],
+      "closure_bead": "bd-wz2sg.4",
       "closure_path": [
-        "Define hook contract coverage plan under integration parity in bd-2xalc.",
-        "Tie command-triggered hook points to CLI closure in bd-3meug.",
-        "Validate extension UI + tool event interactions in bd-359pl."
+        "Extend lifecycle hook coverage to user and pre-agent hook families.",
+        "Cover session tree cancellation alongside switch/fork/compact cancellable paths.",
+        "Regenerate the deterministic lifecycle hook parity matrix artifact."
       ],
       "verification_evidence": [
-        "Lifecycle hook invocation matrix (before/after/cancellable paths)",
-        "Cross-implementation hook ordering traces",
-        "Extension fixture suite with deterministic assertions"
+        "tests/extensions_event_wiring.rs::lifecycle_hook_parity_matrix_writes_evidence_artifact",
+        "tests/ext_conformance/reports/lifecycle_hooks/lifecycle_hook_parity_matrix.json",
+        "src/extensions_js.rs::__pi_dispatch_event_inner"
       ],
-      "blocked_by": [
-        "bd-3meug",
-        "bd-359pl"
-      ]
+      "blocked_by": []
     },
     {
       "gap_id": "gap-tool-io-limit-divergence",
@@ -465,7 +466,7 @@
         "ledger_gap_id": "gap-json-rpc-command-semantic-coverage"
       },
       {
-        "summary_item": "Extension hook-point parity unknowns",
+        "summary_item": "Extension hook-point parity coverage",
         "ledger_gap_id": "gap-extension-hook-lifecycle-coverage"
       },
       {
@@ -485,10 +486,10 @@
   "rollup": {
     "entry_count": 14,
     "severity_counts": {
-      "high": 1,
+      "high": 0,
       "medium": 3,
       "low": 1,
-      "resolved": 8,
+      "resolved": 9,
       "retired": 1
     },
     "top_unblockers": [

@@ -114,6 +114,57 @@ fn exercise_lifecycle_hooks(manager: &ExtensionManager) {
                 .await
                 .expect("dispatch agent_start");
 
+            let input_response = manager
+                .dispatch_event_with_response(
+                    ExtensionEventName::Input,
+                    Some(json!({"text": "hello", "source": "interactive"})),
+                    5000,
+                )
+                .await
+                .expect("dispatch input")
+                .expect("input hook returns transform");
+            assert_eq!(
+                input_response.get("action").and_then(Value::as_str),
+                Some("transform")
+            );
+            assert_eq!(
+                input_response.get("text").and_then(Value::as_str),
+                Some("hello [hooked]")
+            );
+
+            let before_agent_start_response = manager
+                .dispatch_event_with_response(
+                    ExtensionEventName::BeforeAgentStart,
+                    Some(json!({
+                        "prompt": "summarize",
+                        "systemPrompt": "base-system",
+                    })),
+                    5000,
+                )
+                .await
+                .expect("dispatch before_agent_start")
+                .expect("before_agent_start hook returns response");
+            assert_eq!(
+                before_agent_start_response
+                    .get("systemPrompt")
+                    .and_then(Value::as_str),
+                Some("base-system + hook-rules")
+            );
+
+            let user_bash_response = manager
+                .dispatch_event_with_response(
+                    ExtensionEventName::UserBash,
+                    Some(json!({"command": "git status --short"})),
+                    5000,
+                )
+                .await
+                .expect("dispatch user_bash")
+                .expect("user_bash hook returns response");
+            assert_eq!(
+                user_bash_response.get("allow").and_then(Value::as_bool),
+                Some(true)
+            );
+
             let tool = make_tool_call("read", json!({"path": "sample.txt"}));
             manager
                 .dispatch_tool_call(&tool, 5000)
@@ -151,6 +202,11 @@ fn collect_cancellable_lifecycle_results(cancel_manager: &ExtensionManager) -> V
             "session_before_compact",
             ExtensionEventName::SessionBeforeCompact,
             json!({"preparation": {}, "branchEntries": []}),
+        ),
+        (
+            "session_before_tree",
+            ExtensionEventName::SessionBeforeTree,
+            json!({"preparation": {"branchCount": 1, "entryCount": 2}}),
         ),
     ];
 
@@ -192,12 +248,16 @@ fn write_lifecycle_hook_parity_artifact(ordering_trace: &[String], cancellable_r
         "coverage": [
             {"hook": "startup", "mode": "fire_and_forget", "observed": true},
             {"hook": "agent_start", "mode": "fire_and_forget", "observed": true},
+            {"hook": "input", "mode": "transform", "observed": true},
+            {"hook": "before_agent_start", "mode": "pre_agent", "observed": true},
+            {"hook": "user_bash", "mode": "first_result", "observed": true},
             {"hook": "tool_call", "mode": "pre_tool", "observed": true},
             {"hook": "tool_result", "mode": "post_tool", "observed": true},
             {"hook": "agent_end", "mode": "fire_and_forget", "observed": true},
             {"hook": "session_before_switch", "mode": "cancellable", "observed": true},
             {"hook": "session_before_fork", "mode": "cancellable", "observed": true},
-            {"hook": "session_before_compact", "mode": "cancellable", "observed": true}
+            {"hook": "session_before_compact", "mode": "cancellable", "observed": true},
+            {"hook": "session_before_tree", "mode": "cancellable", "observed": true}
         ],
         "ordering_trace": ordering_trace,
         "cancellable_assertions": cancellable_results,
@@ -238,6 +298,21 @@ export default function init(pi) {
     pi.on("agent_start", (event, ctx) => {
         events.push("agent_start");
         return null;
+    });
+
+    pi.on("input", (event, ctx) => {
+        events.push("input:" + event.text + ":" + event.source);
+        return { action: "transform", text: event.text + " [hooked]" };
+    });
+
+    pi.on("before_agent_start", (event, ctx) => {
+        events.push("before_agent_start:" + event.prompt);
+        return { systemPrompt: event.systemPrompt + " + hook-rules" };
+    });
+
+    pi.on("user_bash", (event, ctx) => {
+        events.push("user_bash:" + event.command);
+        return { allow: true };
     });
 
     pi.on("agent_end", (event, ctx) => {
@@ -304,6 +379,10 @@ export default function init(pi) {
 
     pi.on("session_before_compact", (event, ctx) => {
         return false;
+    });
+
+    pi.on("session_before_tree", (event, ctx) => {
+        return { cancel: true };
     });
 
     pi.on("session_switch", (event, ctx) => {
@@ -898,6 +977,9 @@ fn lifecycle_hook_parity_matrix_writes_evidence_artifact() {
         vec![
             "startup".to_string(),
             "agent_start".to_string(),
+            "input:hello:interactive".to_string(),
+            "before_agent_start:summarize".to_string(),
+            "user_bash:git status --short".to_string(),
             "tool_call:read".to_string(),
             "tool_result:read".to_string(),
             "agent_end".to_string(),
