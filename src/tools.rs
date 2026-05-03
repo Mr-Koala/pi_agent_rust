@@ -752,11 +752,7 @@ fn enforce_cwd_scope(path: &Path, cwd: &Path, action: &str) -> Result<PathBuf> {
 /// symlinks before the prefix check, so e.g. `~/.pi/agent/skills/foo/SKILL.md`
 /// pointing at `/etc/passwd` resolves to `/etc/passwd` and fails the prefix
 /// test against both cwd and agent dir.
-fn enforce_read_scope_with_roots(
-    path: &Path,
-    cwd: &Path,
-    agent_dir: &Path,
-) -> Result<PathBuf> {
+fn enforce_read_scope_with_roots(path: &Path, cwd: &Path, agent_dir: &Path) -> Result<PathBuf> {
     let canonical_path = crate::extensions::safe_canonicalize(path);
     let canonical_cwd = crate::extensions::safe_canonicalize(cwd);
     if canonical_path.starts_with(&canonical_cwd) {
@@ -6551,7 +6547,12 @@ mod tests {
         let resolved =
             enforce_read_scope_with_roots(&skill_path, cwd.path(), agent_dir.path()).unwrap();
         assert!(
-            resolved.starts_with(agent_dir.path().canonicalize().unwrap_or_else(|_| agent_dir.path().to_path_buf())),
+            resolved.starts_with(
+                agent_dir
+                    .path()
+                    .canonicalize()
+                    .unwrap_or_else(|_| agent_dir.path().to_path_buf())
+            ),
             "agent-dir path must be allowed and returned canonicalised"
         );
     }
@@ -6565,8 +6566,8 @@ mod tests {
         std::fs::write(unrelated.path().join("secret.txt"), "secret").unwrap();
         let secret_path = unrelated.path().join("secret.txt");
 
-        let err = enforce_read_scope_with_roots(&secret_path, cwd.path(), agent_dir.path())
-            .unwrap_err();
+        let err =
+            enforce_read_scope_with_roots(&secret_path, cwd.path(), agent_dir.path()).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("outside the working directory") && msg.contains("agent dir"),
@@ -6582,13 +6583,16 @@ mod tests {
         let agent_dir = tempfile::tempdir().unwrap();
         std::fs::write(cwd.path().join("a.txt"), "in cwd").unwrap();
 
-        let resolved = enforce_read_scope_with_roots(
-            &cwd.path().join("a.txt"),
-            cwd.path(),
-            agent_dir.path(),
-        )
-        .unwrap();
-        assert!(resolved.starts_with(cwd.path().canonicalize().unwrap_or_else(|_| cwd.path().to_path_buf())));
+        let resolved =
+            enforce_read_scope_with_roots(&cwd.path().join("a.txt"), cwd.path(), agent_dir.path())
+                .unwrap();
+        assert!(
+            resolved.starts_with(
+                cwd.path()
+                    .canonicalize()
+                    .unwrap_or_else(|_| cwd.path().to_path_buf())
+            )
+        );
     }
 
     #[test]
