@@ -231,34 +231,136 @@ fn loopback_http_allowed_when_opt_in_set() {
     server.join().unwrap();
 }
 
+/// Bind a free local port and immediately drop the listener so the port
+/// is (with very high probability) closed for the duration of the test.
+/// Used by the policy-gate tests below: any TCP connect to this port will
+/// fail with ECONNREFUSED, which surfaces as `HostCallErrorCode::Io`. This
+/// lets us prove the policy gate was passed (error code != Denied) without
+/// depending on a live listener.
+#[cfg(unix)]
+fn closed_loopback_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+    port
+}
+
+/// Hit `url` with a connector configured for `require_tls=true,
+/// allow_loopback_http=true` and assert the policy gate passed. "Passed"
+/// means the dispatch did not return `Denied`; the actual TCP connection
+/// failure is expected (the URL points at a closed loopback port) and
+/// surfaces as `Io`. Used by the loopback-acceptance tests below.
+#[cfg(unix)]
+fn assert_loopback_policy_passes(url: &str) {
+    let connector = HttpConnector::new(HttpConnectorConfig {
+        require_tls: true,
+        allow_loopback_http: true,
+        ..Default::default()
+    });
+    let call = http_call(url, "GET");
+    let owned = url.to_string();
+    let result = run_async(async move { connector.dispatch(&call).await.unwrap() });
+
+    // We rely on the bind-then-drop pattern producing a closed port, so the
+    // result must be an error. If the result is *not* an error something
+    // unexpected is on the loopback port — fail loudly instead of passing
+    // silently.
+    assert!(
+        result.is_error,
+        "expected connection error for closed loopback port {owned}, got success"
+    );
+    let error = result.error.as_ref().expect("error payload");
+    assert_ne!(
+        error.code,
+        HostCallErrorCode::Denied,
+        "loopback alias {owned} should pass policy gate: {}",
+        error.message
+    );
+    // Cross-check the deny message hint isn't somehow leaking in: if the
+    // policy gate had run, we'd see "TLS required" in the message.
+    assert!(
+        !error.message.contains("TLS required"),
+        "loopback alias {owned} should not surface the TLS deny message: {}",
+        error.message
+    );
+}
+
 #[test]
-fn loopback_http_accepts_localhost_literal() {
-    // "localhost" must be honored as a loopback alias even though it's not
-    // an IP literal — the bracketed IPv6 form must work too.
+#[cfg(unix)]
+fn loopback_http_accepts_all_loopback_aliases() {
+    // Every loopback alias the URL parser can produce must be honored:
+    //   - "localhost" hostname (case-insensitive)
+    //   - bracketed IPv6 loopback `[::1]`
+    //   - bracketed verbose IPv6 `[0:0:0:0:0:0:0:1]`
+    //   - dotted IPv4 loopback inside 127.0.0.0/8
+    //   - the upper end of 127.0.0.0/8 (`127.255.255.254`)
+    //
+    // Unbracketed IPv6 with an explicit port (`http://::1:8080`) is not
+    // tested here: the upstream URL parser cannot distinguish
+    // "address `::1` port `8080`" from "address `::1:8080` default port"
+    // and emits the latter, which fails IpAddr parsing — that's a parser
+    // limitation, not a policy-gate behavior, and is the same on https://.
+    let port = closed_loopback_port();
     for url in [
-        "http://localhost:37778/health",
-        "http://[::1]:37778/health",
-        "http://127.0.0.1:37778/health",
+        format!("http://localhost:{port}/health"),
+        format!("http://Localhost:{port}/health"),
+        format!("http://LOCALHOST:{port}/health"),
+        format!("http://[::1]:{port}/health"),
+        format!("http://[0:0:0:0:0:0:0:1]:{port}/health"),
+        format!("http://127.0.0.1:{port}/health"),
+        format!("http://127.255.255.254:{port}/health"),
+    ] {
+        assert_loopback_policy_passes(&url);
+    }
+}
+
+#[test]
+fn loopback_http_rejects_non_loopback_addresses_when_opt_in() {
+    // Critical security property: the opt-in MUST NOT loosen policy for
+    // anything outside 127.0.0.0/8 / ::1. Lookalike hostnames, the
+    // unspecified address, RFC1918 private space, and link-local addresses
+    // all must still be denied.
+    for host in [
+        "localhost.evil.com",       // suffix lookalike
+        "evil.localhost",           // prefix lookalike (RFC 6761 carves out
+                                    // .localhost as loopback in resolvers,
+                                    // but we don't resolve — we treat it as
+                                    // a non-loopback hostname so an
+                                    // attacker can't smuggle a connection
+                                    // by crafting a rogue DNS name)
+        "0.0.0.0",                  // unspecified address, not loopback
+        "10.0.0.1",                 // RFC1918 private
+        "192.168.1.1",              // RFC1918 private
+        "169.254.169.254",          // link-local (cloud metadata!)
+        "[::]",                     // IPv6 unspecified
+        "[fe80::1]",                // IPv6 link-local
+        "[2001:db8::1]",            // documentation prefix, not loopback
     ] {
         let connector = HttpConnector::new(HttpConnectorConfig {
             require_tls: true,
             allow_loopback_http: true,
             ..Default::default()
         });
-        let call = http_call(url, "GET");
+        let url = format!("http://{host}/data");
+        let call = http_call(&url, "GET");
         let result = run_async(async move { connector.dispatch(&call).await.unwrap() });
 
-        // Connection will fail (no server), but policy must pass — i.e. the
-        // error code must NOT be Denied. We only care about the policy gate.
-        if result.is_error {
-            let error = result.error.as_ref().expect("error payload");
-            assert_ne!(
-                error.code,
-                HostCallErrorCode::Denied,
-                "loopback alias {url} should pass policy: {}",
-                error.message
-            );
-        }
+        assert!(
+            result.is_error,
+            "non-loopback host {host} must still be denied with opt-in"
+        );
+        let error = result.error.expect("error payload");
+        assert_eq!(
+            error.code,
+            HostCallErrorCode::Denied,
+            "non-loopback host {host} must error with Denied (got message: {})",
+            error.message
+        );
+        assert!(
+            error.message.contains("TLS required"),
+            "deny message for {host} should mention TLS: {}",
+            error.message
+        );
     }
 }
 
