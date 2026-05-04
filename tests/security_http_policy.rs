@@ -186,6 +186,10 @@ fn loopback_http_denied_when_opt_in_unset() {
 #[test]
 fn loopback_http_denied_for_non_loopback_even_when_opt_in() {
     // The escape hatch must only loosen policy for true loopback addresses.
+    // Even with `allow_loopback_http: true`, `http://example.com/` must
+    // still be denied AND the message must stay focused on `https://`
+    // — surfacing the loopback opt-in hint here would be misdirection
+    // since the env var is already on but doesn't apply to this host.
     let connector = HttpConnector::new(HttpConnectorConfig {
         require_tls: true,
         allow_loopback_http: true,
@@ -197,16 +201,30 @@ fn loopback_http_denied_for_non_loopback_even_when_opt_in() {
     assert!(result.is_error, "non-loopback http must still be denied");
     let error = result.error.expect("error payload");
     assert_eq!(error.code, HostCallErrorCode::Denied);
+    assert!(
+        error.message.contains("TLS required"),
+        "deny message should mention TLS: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("PI_HTTP_ALLOW_LOOPBACK"),
+        "non-loopback denial (even with opt-in) must not surface the \
+         loopback hint: {}",
+        error.message
+    );
 }
 
 #[test]
 fn tls_required_message_omits_loopback_hint_for_non_loopback_hosts() {
-    // For a non-loopback `http://` URL the env-var hint is misdirection —
-    // setting `PI_HTTP_ALLOW_LOOPBACK=1` won't unblock `example.com`. The
-    // message should stay focused on the actual fix (use https://) and
-    // not waste the user's time on an option that doesn't apply.
+    // Companion to `loopback_http_denied_for_non_loopback_even_when_opt_in`
+    // covering the opt-in-OFF case: a non-loopback `http://` URL with the
+    // opt-in disabled must also produce the focused message, with no
+    // misdirection toward the env var. Together the two tests pin the
+    // "no loopback hint for non-loopback hosts" property under both
+    // values of `allow_loopback_http`.
     let connector = HttpConnector::new(HttpConnectorConfig {
         require_tls: true,
+        allow_loopback_http: false,
         ..Default::default()
     });
     let call = http_call("http://example.com/data", "GET");
