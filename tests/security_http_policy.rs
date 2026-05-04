@@ -303,7 +303,6 @@ fn assert_loopback_policy_passes(url: &str) {
         ..Default::default()
     });
     let call = http_call(url, "GET");
-    let owned = url.to_string();
     let result = run_async(async move { connector.dispatch(&call).await.unwrap() });
 
     // We rely on the bind-then-drop pattern producing a closed port, so the
@@ -312,20 +311,20 @@ fn assert_loopback_policy_passes(url: &str) {
     // silently.
     assert!(
         result.is_error,
-        "expected connection error for closed loopback port {owned}, got success"
+        "expected connection error for closed loopback port {url}, got success"
     );
     let error = result.error.as_ref().expect("error payload");
     assert_ne!(
         error.code,
         HostCallErrorCode::Denied,
-        "loopback alias {owned} should pass policy gate: {}",
+        "loopback alias {url} should pass policy gate: {}",
         error.message
     );
     // Cross-check the deny message hint isn't somehow leaking in: if the
     // policy gate had run, we'd see "TLS required" in the message.
     assert!(
         !error.message.contains("TLS required"),
-        "loopback alias {owned} should not surface the TLS deny message: {}",
+        "loopback alias {url} should not surface the TLS deny message: {}",
         error.message
     );
 }
