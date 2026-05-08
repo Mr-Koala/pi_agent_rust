@@ -596,6 +596,18 @@ PY
 Use this workflow for user-facing "it is slow" incidents. Keep the scenario, replay
 command, and artifact pointers together so triage can be reproduced exactly.
 
+#### Swarm coordination troubleshooting
+
+- Preflight command:
+  `pi doctor --only swarm --format json`
+- Confirms:
+  Beads JSONL health, stale `in_progress` work, Agent Mail status/inbox/reservations,
+  git dirty-state, `rch status`, and `CARGO_TARGET_DIR`/`TMPDIR` headroom.
+- Next actions:
+  Contact active owners through Agent Mail before resetting stale beads, resolve
+  reservation conflicts before editing overlapping files, and move heavyweight
+  Cargo checks to `/data/tmp/pi_agent_rust_cargo/<agent>/` when headroom is low.
+
 #### Durability troubleshooting
 
 - Replay command:

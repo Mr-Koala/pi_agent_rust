@@ -3346,13 +3346,13 @@ fn handle_doctor(
         }
         if !invalid.is_empty() {
             bail!(
-                "Unknown --only categories: {} (valid: config, dirs, auth, shell, sessions, extensions)",
+                "Unknown --only categories: {} (valid: config, dirs, auth, shell, sessions, swarm, extensions)",
                 invalid.join(", ")
             );
         }
         if parsed.is_empty() {
             bail!(
-                "--only must include at least one category (valid: config, dirs, auth, shell, sessions, extensions)"
+                "--only must include at least one category (valid: config, dirs, auth, shell, sessions, swarm, extensions)"
             );
         }
         Some(parsed)

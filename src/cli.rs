@@ -1790,7 +1790,7 @@ pub enum Commands {
         /// Automatically fix safe issues (missing dirs, permissions)
         #[arg(long)]
         fix: bool,
-        /// Run specific categories: config,dirs,auth,shell,sessions,extensions
+        /// Run specific categories: config,dirs,auth,shell,sessions,swarm,extensions
         #[arg(long)]
         only: Option<String>,
     },

@@ -10,13 +10,21 @@ use crate::error::Result;
 use crate::provider_metadata::provider_auth_env_keys;
 use crate::session::SessionHeader;
 use crate::session_index::walk_sessions;
-use serde::Serialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const SWARM_STALE_IN_PROGRESS_HOURS: i64 = 24;
+const SWARM_DETAIL_LIMIT: usize = 5;
+const SWARM_DISK_WARN_AVAILABLE_KB: u64 = 10 * 1024 * 1024;
+const SWARM_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ── Core Types ──────────────────────────────────────────────────────
 
@@ -62,6 +70,7 @@ pub enum CheckCategory {
     Auth,
     Shell,
     Sessions,
+    Swarm,
     Extensions,
 }
 
@@ -73,6 +82,7 @@ impl CheckCategory {
             Self::Auth => "Authentication",
             Self::Shell => "Shell & Tools",
             Self::Sessions => "Sessions",
+            Self::Swarm => "Swarm Coordination",
             Self::Extensions => "Extensions",
         }
     }
@@ -93,6 +103,7 @@ impl std::str::FromStr for CheckCategory {
             "auth" | "authentication" => Ok(Self::Auth),
             "shell" => Ok(Self::Shell),
             "sessions" => Ok(Self::Sessions),
+            "swarm" | "coordination" | "leases" => Ok(Self::Swarm),
             "extensions" | "ext" => Ok(Self::Extensions),
             other => Err(format!("unknown category: {other}")),
         }
@@ -389,6 +400,9 @@ pub fn run_doctor(opts: &DoctorOptions<'_>) -> Result<DoctorReport> {
     }
     if should_run(CheckCategory::Sessions) {
         check_sessions(&mut findings);
+    }
+    if should_run(CheckCategory::Swarm) {
+        check_swarm(opts.cwd, &mut findings);
     }
 
     Ok(DoctorReport::from_findings(findings))
@@ -1043,6 +1057,889 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
+// ── Check: Swarm Coordination ───────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn check_swarm(cwd: &Path, findings: &mut Vec<Finding>) {
+    check_swarm_beads(cwd, findings);
+    check_swarm_br_status(cwd, findings);
+    check_swarm_agent_mail(cwd, findings);
+    check_swarm_git(cwd, findings);
+    check_swarm_rch(findings);
+    check_swarm_temp_dirs(findings);
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct BeadsLedgerSummary {
+    total: usize,
+    open: usize,
+    in_progress: usize,
+    active: usize,
+    parse_errors: usize,
+    stale_in_progress: Vec<StaleIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StaleIssue {
+    id: String,
+    title: String,
+    updated_at: String,
+    age_hours: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct BeadsIssueRecord {
+    id: String,
+    #[serde(default)]
+    title: String,
+    status: String,
+    updated_at: Option<String>,
+}
+
+fn check_swarm_beads(cwd: &Path, findings: &mut Vec<Finding>) {
+    let cat = CheckCategory::Swarm;
+    let ledger_path = cwd.join(".beads/issues.jsonl");
+    if !ledger_path.is_file() {
+        findings.push(
+            Finding::warn(cat, "Beads ledger not found")
+                .with_detail(format!("Expected {}", ledger_path.display()))
+                .with_remediation("Run from a Beads-backed checkout or initialize Beads first"),
+        );
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&ledger_path) {
+        Ok(content) => content,
+        Err(err) => {
+            findings.push(
+                Finding::fail(cat, "Beads ledger is not readable")
+                    .with_detail(format!("{}: {err}", ledger_path.display()))
+                    .with_remediation("Check ledger permissions before starting more agents"),
+            );
+            return;
+        }
+    };
+
+    let summary = summarize_beads_ledger(&content, Utc::now(), SWARM_STALE_IN_PROGRESS_HOURS);
+    if summary.parse_errors == 0 {
+        findings.push(
+            Finding::pass(cat, "Beads ledger parses").with_detail(format!(
+                "{} issues; {} active ({} open, {} in_progress)",
+                summary.total, summary.active, summary.open, summary.in_progress
+            )),
+        );
+    } else {
+        findings.push(
+            Finding::fail(cat, "Beads ledger has malformed JSONL rows")
+                .with_detail(format!(
+                    "{} parse error(s) in {} rows",
+                    summary.parse_errors, summary.total
+                ))
+                .with_remediation("Run `br doctor --json` and rebuild from healthy issues.jsonl before claiming more work"),
+        );
+    }
+
+    if summary.stale_in_progress.is_empty() {
+        findings.push(Finding::pass(cat, "No stale in_progress beads detected"));
+    } else {
+        findings.push(
+            Finding::warn(cat, "Stale in_progress beads need coordination")
+                .with_detail(format_stale_issues(&summary.stale_in_progress))
+                .with_remediation("Use Agent Mail to contact owners; only reset a bead after confirming the owner is stale"),
+        );
+    }
+}
+
+fn summarize_beads_ledger(
+    content: &str,
+    now: DateTime<Utc>,
+    stale_after_hours: i64,
+) -> BeadsLedgerSummary {
+    let mut summary = BeadsLedgerSummary::default();
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        summary.total += 1;
+        let Ok(issue) = serde_json::from_str::<BeadsIssueRecord>(line) else {
+            summary.parse_errors += 1;
+            continue;
+        };
+
+        match issue.status.as_str() {
+            "open" => {
+                summary.open += 1;
+                summary.active += 1;
+            }
+            "in_progress" => {
+                summary.in_progress += 1;
+                summary.active += 1;
+                if let Some(stale) = stale_issue_from_record(issue, now, stale_after_hours) {
+                    summary.stale_in_progress.push(stale);
+                }
+            }
+            _ => {}
+        }
+    }
+    summary
+}
+
+fn stale_issue_from_record(
+    issue: BeadsIssueRecord,
+    now: DateTime<Utc>,
+    stale_after_hours: i64,
+) -> Option<StaleIssue> {
+    let updated_at = issue.updated_at?;
+    let parsed = DateTime::parse_from_rfc3339(&updated_at).ok()?;
+    let age_hours = now
+        .signed_duration_since(parsed.with_timezone(&Utc))
+        .num_hours();
+    (age_hours >= stale_after_hours).then_some(StaleIssue {
+        id: issue.id,
+        title: issue.title,
+        updated_at,
+        age_hours,
+    })
+}
+
+fn format_stale_issues(issues: &[StaleIssue]) -> String {
+    let mut parts: Vec<String> = issues
+        .iter()
+        .take(SWARM_DETAIL_LIMIT)
+        .map(|issue| {
+            let title = truncate_chars(&issue.title, 54);
+            format!("{}: {title} ({}h old)", issue.id, issue.age_hours)
+        })
+        .collect();
+    if issues.len() > SWARM_DETAIL_LIMIT {
+        parts.push(format!("+{} more", issues.len() - SWARM_DETAIL_LIMIT));
+    }
+    parts.join("; ")
+}
+
+fn check_swarm_br_status(cwd: &Path, findings: &mut Vec<Finding>) {
+    let cat = CheckCategory::Swarm;
+    if which_tool("br").is_none() {
+        findings.push(
+            Finding::warn(cat, "br not found for Beads DB status")
+                .with_remediation("Install/repair beads_rust before starting a swarm"),
+        );
+        return;
+    }
+    let args = ["sync", "--status", "--json"];
+    match run_tool_with_timeout(SwarmProbeCommand::Br, &args, Some(cwd), SWARM_PROBE_TIMEOUT) {
+        Ok(outcome) if outcome.timed_out => {
+            findings.push(
+                Finding::warn(cat, "br sync status timed out").with_remediation(
+                    "Run `br doctor --json`; avoid claiming work until Beads responds",
+                ),
+            );
+        }
+        Ok(outcome) if outcome.success => {
+            match serde_json::from_str::<serde_json::Value>(&outcome.stdout) {
+                Ok(value) => findings.push(classify_br_sync_status(&value)),
+                Err(err) => findings.push(
+                    Finding::warn(cat, "br sync status returned non-JSON output")
+                        .with_detail(format!("{err}; {}", redacted_output_snippet(&outcome)))
+                        .with_remediation(
+                            "Run `br sync --status --json` and `br doctor --json` manually",
+                        ),
+                ),
+            }
+        }
+        Ok(outcome) => {
+            findings.push(
+                Finding::fail(cat, "Beads DB/status probe failed")
+                    .with_detail(command_failure_detail(&outcome))
+                    .with_remediation("Run `br doctor --json` and rebuild from healthy issues.jsonl before claiming more work"),
+            );
+        }
+        Err(err) => {
+            findings.push(
+                Finding::warn(cat, "br sync status failed to start")
+                    .with_detail(err.to_string())
+                    .with_remediation("Run `br doctor --json` before claiming more work"),
+            );
+        }
+    }
+}
+
+fn classify_br_sync_status(value: &serde_json::Value) -> Finding {
+    let dirty_count = json_number_by_key(value, "dirty_count").unwrap_or(0);
+    let jsonl_newer = json_bool_by_key(value, "jsonl_newer").unwrap_or(false);
+    let db_newer = json_bool_by_key(value, "db_newer").unwrap_or(false);
+    let detail =
+        format!("dirty_count={dirty_count}, jsonl_newer={jsonl_newer}, db_newer={db_newer}");
+    if dirty_count > 0 || jsonl_newer || db_newer {
+        Finding::warn(CheckCategory::Swarm, "Beads DB/JSONL sync drift detected")
+            .with_detail(detail)
+            .with_remediation(
+                "Run `br sync --status --json`; coordinate before importing or exporting",
+            )
+    } else {
+        Finding::pass(CheckCategory::Swarm, "Beads DB/JSONL sync status clean").with_detail(detail)
+    }
+}
+
+fn check_swarm_agent_mail(cwd: &Path, findings: &mut Vec<Finding>) {
+    let cat = CheckCategory::Swarm;
+    let Some(am_path) = which_tool("am") else {
+        findings.push(
+            Finding::warn(cat, "Agent Mail CLI not found")
+                .with_remediation("Install/repair MCP Agent Mail before running a large swarm"),
+        );
+        return;
+    };
+
+    findings.push(Finding::pass(cat, format!("Agent Mail CLI ({am_path})")));
+
+    let agent_name = first_non_empty_env(&["AGENT_MAIL_AGENT", "AGENT_NAME"]);
+    let project = cwd.display().to_string();
+
+    if let Some(agent) = agent_name.as_deref() {
+        findings.push(Finding::pass(
+            cat,
+            format!("Agent Mail agent identity: {agent}"),
+        ));
+        let status_args = [
+            "robot",
+            "status",
+            "--format",
+            "json",
+            "--project",
+            project.as_str(),
+            "--agent",
+            agent,
+        ];
+        probe_agent_mail_json(
+            SwarmProbeCommand::Am,
+            &status_args,
+            cwd,
+            "Agent Mail status",
+            classify_agent_mail_status,
+            "Retry after active Agent Mail maintenance finishes; if it stays busy, inspect `am robot health --format json`",
+            findings,
+        );
+
+        let inbox_args = [
+            "robot",
+            "inbox",
+            "--format",
+            "json",
+            "--project",
+            project.as_str(),
+            "--agent",
+            agent,
+            "--unread",
+            "--limit",
+            "20",
+        ];
+        probe_agent_mail_json(
+            SwarmProbeCommand::Am,
+            &inbox_args,
+            cwd,
+            "Agent Mail inbox",
+            classify_agent_mail_inbox,
+            "Run `am robot inbox --unread --format json` or fetch inbox through MCP before claiming more files",
+            findings,
+        );
+    } else {
+        findings.push(
+            Finding::warn(cat, "Agent Mail agent identity not set")
+                .with_detail("AGENT_MAIL_AGENT and AGENT_NAME are both unset")
+                .with_remediation(
+                    "Register with MCP Agent Mail and export AGENT_NAME before claiming swarm work",
+                ),
+        );
+    }
+
+    let reservations_args = [
+        "robot",
+        "reservations",
+        "--format",
+        "json",
+        "--project",
+        project.as_str(),
+        "--all",
+        "--expiring",
+        "30",
+    ];
+    probe_agent_mail_json(
+        SwarmProbeCommand::Am,
+        &reservations_args,
+        cwd,
+        "Agent Mail reservations",
+        classify_agent_mail_reservations,
+        "Run `am robot reservations --all --format json` and resolve conflicts or renew expiring leases",
+        findings,
+    );
+}
+
+fn probe_agent_mail_json<F>(
+    command: SwarmProbeCommand,
+    args: &[&str],
+    cwd: &Path,
+    label: &str,
+    classify: F,
+    remediation: &str,
+    findings: &mut Vec<Finding>,
+) where
+    F: FnOnce(&serde_json::Value) -> Finding,
+{
+    let cat = CheckCategory::Swarm;
+    match run_tool_with_timeout(command, args, Some(cwd), SWARM_PROBE_TIMEOUT) {
+        Ok(outcome) if outcome.timed_out => {
+            findings.push(
+                Finding::warn(cat, format!("{label} probe timed out"))
+                    .with_detail(format!(
+                        "command: am {}; timeout={}s",
+                        args.join(" "),
+                        SWARM_PROBE_TIMEOUT.as_secs()
+                    ))
+                    .with_remediation(remediation),
+            );
+        }
+        Ok(outcome) if !outcome.success => {
+            findings.push(
+                Finding::warn(cat, format!("{label} probe unavailable"))
+                    .with_detail(command_failure_detail(&outcome))
+                    .with_remediation(remediation),
+            );
+        }
+        Ok(outcome) => match serde_json::from_str::<serde_json::Value>(&outcome.stdout) {
+            Ok(value) => findings.push(classify(&value)),
+            Err(err) => findings.push(
+                Finding::warn(cat, format!("{label} probe returned non-JSON output"))
+                    .with_detail(format!("{err}; {}", redacted_output_snippet(&outcome)))
+                    .with_remediation(remediation),
+            ),
+        },
+        Err(err) => findings.push(
+            Finding::warn(cat, format!("{label} probe failed to start"))
+                .with_detail(err.to_string())
+                .with_remediation(remediation),
+        ),
+    }
+}
+
+fn classify_agent_mail_status(value: &serde_json::Value) -> Finding {
+    let unread = json_number_by_key(value, "unread").unwrap_or(0);
+    let urgent = json_number_by_key(value, "urgent").unwrap_or(0);
+    let ack_required = json_number_by_key(value, "ack_required").unwrap_or(0);
+    let mut finding = if urgent > 0 || ack_required > 0 {
+        Finding::warn(CheckCategory::Swarm, "Agent Mail status needs attention")
+            .with_remediation("Read urgent or ack-required messages before taking new leases")
+    } else {
+        Finding::pass(CheckCategory::Swarm, "Agent Mail status reachable")
+    };
+    finding.detail = Some(format!(
+        "unread={unread}, urgent={urgent}, ack_required={ack_required}"
+    ));
+    finding
+}
+
+fn classify_agent_mail_inbox(value: &serde_json::Value) -> Finding {
+    let messages = json_array_len_by_key(value, "messages")
+        .or_else(|| json_array_len_by_key(value, "items"))
+        .unwrap_or_else(|| json_number_by_key_as_usize(value, "unread").unwrap_or(0));
+    let urgent = json_number_by_key(value, "urgent").unwrap_or(0);
+    if urgent > 0 {
+        Finding::warn(
+            CheckCategory::Swarm,
+            "Agent Mail inbox has urgent unread messages",
+        )
+        .with_detail(format!("unread_sample={messages}, urgent={urgent}"))
+        .with_remediation("Read or acknowledge urgent mail before claiming more files")
+    } else {
+        Finding::pass(CheckCategory::Swarm, "Agent Mail inbox reachable")
+            .with_detail(format!("unread_sample={messages}, urgent={urgent}"))
+    }
+}
+
+fn classify_agent_mail_reservations(value: &serde_json::Value) -> Finding {
+    let active = json_array_len_by_key(value, "reservations")
+        .or_else(|| json_array_len_by_key(value, "items"))
+        .unwrap_or_else(|| json_number_by_key_as_usize(value, "active").unwrap_or(0));
+    let has_conflict = json_truthy_key_contains(value, "conflict");
+    let expiring = json_number_by_key(value, "expiring").unwrap_or(0);
+    if has_conflict {
+        Finding::warn(
+            CheckCategory::Swarm,
+            "Agent Mail reservation conflicts detected",
+        )
+        .with_detail(format!("active={active}, expiring_soon={expiring}"))
+        .with_remediation("Resolve conflicting file reservations before editing overlapping paths")
+    } else if expiring > 0 {
+        Finding::warn(CheckCategory::Swarm, "Agent Mail reservations expire soon")
+            .with_detail(format!("active={active}, expiring_soon={expiring}"))
+            .with_remediation("Renew active reservations before long-running verification")
+    } else {
+        Finding::pass(CheckCategory::Swarm, "Agent Mail reservations reachable")
+            .with_detail(format!("active={active}, expiring_soon={expiring}"))
+    }
+}
+
+fn check_swarm_git(cwd: &Path, findings: &mut Vec<Finding>) {
+    let cat = CheckCategory::Swarm;
+    if which_tool("git").is_none() {
+        findings.push(
+            Finding::warn(cat, "git not found for swarm dirty-state check")
+                .with_remediation("Install git or run the dirty-state check manually"),
+        );
+        return;
+    }
+    let args = ["status", "--porcelain=v1", "--untracked-files=all"];
+    match run_tool_with_timeout(
+        SwarmProbeCommand::Git,
+        &args,
+        Some(cwd),
+        SWARM_PROBE_TIMEOUT,
+    ) {
+        Ok(outcome) if outcome.timed_out => {
+            findings.push(
+                Finding::warn(cat, "git status timed out")
+                    .with_remediation("Run `git status --short` before staging or committing"),
+            );
+        }
+        Ok(outcome) if outcome.success => {
+            let summary = summarize_git_porcelain(&outcome.stdout);
+            if summary.total == 0 {
+                findings.push(Finding::pass(cat, "Git working tree clean"));
+            } else {
+                findings.push(
+                    Finding::warn(cat, "Git working tree has uncommitted changes")
+                        .with_detail(format!(
+                            "{} total ({} staged, {} unstaged, {} untracked, {} deleted)",
+                            summary.total,
+                            summary.staged,
+                            summary.unstaged,
+                            summary.untracked,
+                            summary.deleted
+                        ))
+                        .with_remediation(
+                            "Run `git status --short` and avoid overwriting other agents' files",
+                        ),
+                );
+            }
+        }
+        Ok(outcome) => {
+            findings.push(
+                Finding::warn(cat, "git status failed")
+                    .with_detail(command_failure_detail(&outcome))
+                    .with_remediation("Run `git status --short` manually before staging"),
+            );
+        }
+        Err(err) => {
+            findings.push(
+                Finding::warn(cat, "git status failed to start")
+                    .with_detail(err.to_string())
+                    .with_remediation("Run `git status --short` manually before staging"),
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct GitPorcelainSummary {
+    staged: usize,
+    unstaged: usize,
+    untracked: usize,
+    deleted: usize,
+    total: usize,
+}
+
+fn summarize_git_porcelain(output: &str) -> GitPorcelainSummary {
+    let mut summary = GitPorcelainSummary::default();
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        summary.total += 1;
+        let bytes = line.as_bytes();
+        let x = bytes.first().copied().unwrap_or(b' ');
+        let y = bytes.get(1).copied().unwrap_or(b' ');
+        if x == b'?' && y == b'?' {
+            summary.untracked += 1;
+            continue;
+        }
+        if x != b' ' {
+            summary.staged += 1;
+        }
+        if y != b' ' {
+            summary.unstaged += 1;
+        }
+        if x == b'D' || y == b'D' {
+            summary.deleted += 1;
+        }
+    }
+    summary
+}
+
+fn check_swarm_rch(findings: &mut Vec<Finding>) {
+    let cat = CheckCategory::Swarm;
+    if which_tool("rch").is_none() {
+        findings.push(
+            Finding::warn(cat, "rch not found").with_remediation(
+                "Install/repair rch before running heavyweight swarm verification",
+            ),
+        );
+        return;
+    }
+    match run_tool_with_timeout(
+        SwarmProbeCommand::Rch,
+        &["status"],
+        None,
+        SWARM_PROBE_TIMEOUT,
+    ) {
+        Ok(outcome) if outcome.timed_out => {
+            findings.push(Finding::warn(cat, "rch status timed out").with_remediation(
+                "Run `rch status` or defer heavyweight cargo checks until workers respond",
+            ));
+        }
+        Ok(outcome) if outcome.success => {
+            findings.push(
+                Finding::pass(cat, "rch status reachable")
+                    .with_detail(redacted_output_snippet(&outcome)),
+            );
+        }
+        Ok(outcome) => {
+            findings.push(
+                Finding::warn(cat, "rch status failed")
+                    .with_detail(command_failure_detail(&outcome))
+                    .with_remediation("Run `rch doctor` and use a high-capacity local target dir if rch is unavailable"),
+            );
+        }
+        Err(err) => {
+            findings.push(
+                Finding::warn(cat, "rch status failed to start")
+                    .with_detail(err.to_string())
+                    .with_remediation("Run `rch doctor` and use a high-capacity local target dir if rch is unavailable"),
+            );
+        }
+    }
+}
+
+fn check_swarm_temp_dirs(findings: &mut Vec<Finding>) {
+    check_swarm_temp_dir("CARGO_TARGET_DIR", findings);
+    check_swarm_temp_dir("TMPDIR", findings);
+}
+
+fn check_swarm_temp_dir(env_name: &str, findings: &mut Vec<Finding>) {
+    let cat = CheckCategory::Swarm;
+    let Some(raw_path) = std::env::var_os(env_name) else {
+        findings.push(
+            Finding::warn(cat, format!("{env_name} is not set"))
+                .with_detail("Heavyweight swarm checks should use /data/tmp/pi_agent_rust_cargo/<agent>")
+                .with_remediation("Export CARGO_TARGET_DIR and TMPDIR under /data/tmp/pi_agent_rust_cargo/<agent>/ before cargo checks"),
+        );
+        return;
+    };
+    let path = PathBuf::from(raw_path);
+    if !path.is_dir() {
+        findings.push(
+            Finding::warn(cat, format!("{env_name} does not point to a directory"))
+                .with_detail(path.display().to_string())
+                .with_remediation(format!(
+                    "Create {} or export {env_name} to an existing high-capacity directory",
+                    path.display()
+                )),
+        );
+        return;
+    }
+
+    match disk_available_kb(&path) {
+        Ok(Some(available_kb)) if available_kb < SWARM_DISK_WARN_AVAILABLE_KB => {
+            findings.push(
+                Finding::warn(cat, format!("{env_name} has low free space"))
+                    .with_detail(format!(
+                        "{} available at {}",
+                        format_available_kb(available_kb),
+                        path.display()
+                    ))
+                    .with_remediation("Switch to a larger /data/tmp target or wait for cleanup before heavy cargo checks"),
+            );
+        }
+        Ok(Some(available_kb)) => {
+            findings.push(
+                Finding::pass(cat, format!("{env_name} headroom")).with_detail(format!(
+                    "{} available at {}",
+                    format_available_kb(available_kb),
+                    path.display()
+                )),
+            );
+        }
+        Ok(None) => {
+            findings.push(
+                Finding::info(cat, format!("{env_name} headroom unavailable"))
+                    .with_detail(path.display().to_string())
+                    .with_remediation(
+                        "Run `df -h` on the configured path before heavy cargo checks",
+                    ),
+            );
+        }
+        Err(err) => {
+            findings.push(
+                Finding::info(cat, format!("{env_name} headroom probe failed"))
+                    .with_detail(err.to_string())
+                    .with_remediation(
+                        "Run `df -h` on the configured path before heavy cargo checks",
+                    ),
+            );
+        }
+    }
+}
+
+fn disk_available_kb(path: &Path) -> std::io::Result<Option<u64>> {
+    if which_tool("df").is_none() {
+        return Ok(None);
+    }
+    let path_arg = path.display().to_string();
+    let outcome = run_tool_with_timeout(
+        SwarmProbeCommand::Df,
+        &["-Pk", path_arg.as_str()],
+        None,
+        SWARM_PROBE_TIMEOUT,
+    )?;
+    if outcome.success {
+        Ok(parse_df_available_kb(&outcome.stdout))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_df_available_kb(output: &str) -> Option<u64> {
+    output
+        .lines()
+        .skip(1)
+        .find_map(|line| line.split_whitespace().nth(3)?.parse::<u64>().ok())
+}
+
+fn format_available_kb(kb: u64) -> String {
+    if kb >= 1024 * 1024 {
+        let tenths = kb.saturating_mul(10) / (1024 * 1024);
+        format!("{}.{:01} GiB", tenths / 10, tenths % 10)
+    } else {
+        let tenths = kb.saturating_mul(10) / 1024;
+        format!("{}.{:01} MiB", tenths / 10, tenths % 10)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandOutcome {
+    timed_out: bool,
+    success: bool,
+    status_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwarmProbeCommand {
+    Am,
+    Br,
+    Df,
+    Git,
+    Rch,
+}
+
+fn run_tool_with_timeout(
+    tool: SwarmProbeCommand,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+) -> std::io::Result<CommandOutcome> {
+    let mut command = match tool {
+        SwarmProbeCommand::Am => Command::new("am"),
+        SwarmProbeCommand::Br => Command::new("br"),
+        SwarmProbeCommand::Df => Command::new("df"),
+        SwarmProbeCommand::Git => Command::new("git"),
+        SwarmProbeCommand::Rch => Command::new("rch"),
+    };
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+
+    let mut child = command.spawn()?;
+    let started = Instant::now();
+    let mut timed_out = false;
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if started.elapsed() >= timeout {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    let output = child.wait_with_output()?;
+    Ok(CommandOutcome {
+        timed_out,
+        success: output.status.success(),
+        status_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
+fn command_failure_detail(outcome: &CommandOutcome) -> String {
+    format!(
+        "exit={:?}; {}",
+        outcome.status_code,
+        redacted_output_snippet(outcome)
+    )
+}
+
+fn redacted_output_snippet(outcome: &CommandOutcome) -> String {
+    let stdout = redact_sensitive_lines(outcome.stdout.trim(), 3);
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    let stderr = redact_sensitive_lines(outcome.stderr.trim(), 3);
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    "no output".to_string()
+}
+
+fn redact_sensitive_lines(text: &str, max_lines: usize) -> String {
+    text.lines()
+        .take(max_lines)
+        .map(|line| {
+            if line_is_sensitive(line) {
+                "[redacted sensitive output line]".to_string()
+            } else {
+                truncate_chars(line.trim(), 220)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn line_is_sensitive(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer",
+        "credential",
+        "password",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut truncated = text.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+fn first_non_empty_env(keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn json_number_by_key(value: &serde_json::Value, key: &str) -> Option<u64> {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(found) = map.get(key).and_then(json_value_as_u64) {
+                return Some(found);
+            }
+            map.values()
+                .find_map(|child| json_number_by_key(child, key))
+        }
+        serde_json::Value::Array(values) => values
+            .iter()
+            .find_map(|child| json_number_by_key(child, key)),
+        _ => None,
+    }
+}
+
+fn json_number_by_key_as_usize(value: &serde_json::Value, key: &str) -> Option<usize> {
+    json_number_by_key(value, key).and_then(|number| usize::try_from(number).ok())
+}
+
+fn json_array_len_by_key(value: &serde_json::Value, key: &str) -> Option<usize> {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::Array(values)) = map.get(key) {
+                return Some(values.len());
+            }
+            map.values()
+                .find_map(|child| json_array_len_by_key(child, key))
+        }
+        serde_json::Value::Array(values) => values
+            .iter()
+            .find_map(|child| json_array_len_by_key(child, key)),
+        _ => None,
+    }
+}
+
+fn json_bool_by_key(value: &serde_json::Value, key: &str) -> Option<bool> {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::Bool(found)) = map.get(key) {
+                return Some(*found);
+            }
+            map.values().find_map(|child| json_bool_by_key(child, key))
+        }
+        serde_json::Value::Array(values) => {
+            values.iter().find_map(|child| json_bool_by_key(child, key))
+        }
+        _ => None,
+    }
+}
+
+fn json_truthy_key_contains(value: &serde_json::Value, needle: &str) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter().any(|(key, child)| {
+            (key.to_ascii_lowercase().contains(needle) && json_value_is_truthy(child))
+                || json_truthy_key_contains(child, needle)
+        }),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|child| json_truthy_key_contains(child, needle)),
+        _ => false,
+    }
+}
+
+fn json_value_as_u64(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::Array(values) => Some(values.len() as u64),
+        _ => None,
+    }
+}
+
+fn json_value_is_truthy(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Number(number) => number.as_u64().is_some_and(|value| value > 0),
+        serde_json::Value::String(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            !normalized.is_empty()
+                && normalized != "0"
+                && normalized != "false"
+                && normalized != "none"
+        }
+        serde_json::Value::Array(values) => !values.is_empty(),
+        serde_json::Value::Object(map) => !map.is_empty(),
+        serde_json::Value::Null => false,
+    }
+}
+
 // ── Check: Sessions ─────────────────────────────────────────────────
 
 fn check_sessions(findings: &mut Vec<Finding>) {
@@ -1275,6 +2172,18 @@ mod tests {
             CheckCategory::Sessions
         );
         assert_eq!(
+            "swarm".parse::<CheckCategory>().unwrap(),
+            CheckCategory::Swarm
+        );
+        assert_eq!(
+            "coordination".parse::<CheckCategory>().unwrap(),
+            CheckCategory::Swarm
+        );
+        assert_eq!(
+            "leases".parse::<CheckCategory>().unwrap(),
+            CheckCategory::Swarm
+        );
+        assert_eq!(
             "extensions".parse::<CheckCategory>().unwrap(),
             CheckCategory::Extensions
         );
@@ -1339,6 +2248,15 @@ mod tests {
     }
 
     #[test]
+    fn render_text_includes_swarm_category() {
+        let report =
+            DoctorReport::from_findings(vec![Finding::pass(CheckCategory::Swarm, "ready")]);
+        let text = report.render_text();
+        assert!(text.contains("[PASS] Swarm Coordination"));
+        assert!(text.contains("[PASS] ready"));
+    }
+
+    #[test]
     fn render_json_valid() {
         let report = DoctorReport::from_findings(vec![Finding::pass(CheckCategory::Config, "ok")]);
         let json = report.to_json().unwrap();
@@ -1363,6 +2281,154 @@ mod tests {
         assert!(is_known_config_key("defaultModel"));
         assert!(is_known_config_key("extensionPolicy"));
         assert!(!is_known_config_key("nonexistent_key_xyz"));
+    }
+
+    #[test]
+    fn swarm_beads_summary_detects_stale_in_progress() {
+        let now = DateTime::parse_from_rfc3339("2026-05-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let content = r#"{"id":"bd-old","title":"Old owner","status":"in_progress","updated_at":"2026-05-07T11:00:00Z"}
+{"id":"bd-fresh","title":"Fresh owner","status":"in_progress","updated_at":"2026-05-08T11:30:00Z"}
+{"id":"bd-open","title":"Open work","status":"open","updated_at":"2026-05-08T10:00:00Z"}
+"#;
+
+        let summary = summarize_beads_ledger(content, now, 24);
+
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.active, 3);
+        assert_eq!(summary.open, 1);
+        assert_eq!(summary.in_progress, 2);
+        assert_eq!(summary.parse_errors, 0);
+        assert_eq!(summary.stale_in_progress.len(), 1);
+        assert_eq!(summary.stale_in_progress[0].id.as_str(), "bd-old");
+    }
+
+    #[test]
+    fn swarm_beads_summary_counts_parse_errors() {
+        let now = DateTime::parse_from_rfc3339("2026-05-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let content = r#"{"id":"bd-open","title":"Open work","status":"open","updated_at":"2026-05-08T10:00:00Z"}
+not-json
+"#;
+
+        let summary = summarize_beads_ledger(content, now, 24);
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.open, 1);
+        assert_eq!(summary.parse_errors, 1);
+    }
+
+    #[test]
+    fn swarm_git_porcelain_summary_counts_dirty_kinds() {
+        let summary =
+            summarize_git_porcelain(" M src/doctor.rs\nA  README.md\n?? notes.md\n D stale.rs\n");
+
+        assert_eq!(summary.total, 4);
+        assert_eq!(summary.staged, 1);
+        assert_eq!(summary.unstaged, 2);
+        assert_eq!(summary.untracked, 1);
+        assert_eq!(summary.deleted, 1);
+    }
+
+    #[test]
+    fn swarm_agent_mail_status_warns_on_ack_required() {
+        let value = serde_json::json!({
+            "inbox": {
+                "unread": 2,
+                "urgent": 0,
+                "ack_required": 1
+            }
+        });
+
+        let finding = classify_agent_mail_status(&value);
+
+        assert_eq!(finding.severity, Severity::Warn);
+        assert!(finding.detail.unwrap().contains("ack_required=1"));
+    }
+
+    #[test]
+    fn swarm_br_status_warns_on_sync_drift() {
+        let value = serde_json::json!({
+            "dirty_count": 2,
+            "jsonl_newer": false,
+            "db_newer": true
+        });
+
+        let finding = classify_br_sync_status(&value);
+
+        assert_eq!(finding.severity, Severity::Warn);
+        assert!(finding.detail.unwrap().contains("dirty_count=2"));
+    }
+
+    #[test]
+    fn swarm_br_status_passes_when_clean() {
+        let value = serde_json::json!({
+            "dirty_count": 0,
+            "jsonl_newer": false,
+            "db_newer": false
+        });
+
+        let finding = classify_br_sync_status(&value);
+
+        assert_eq!(finding.severity, Severity::Pass);
+    }
+
+    #[test]
+    fn swarm_agent_mail_reservations_detect_conflicts() {
+        let value = serde_json::json!({
+            "reservations": [
+                {"path": "src/doctor.rs", "agent": "CalmBridge"}
+            ],
+            "conflicts": [
+                {"path": "src/doctor.rs", "holder": "OtherAgent"}
+            ]
+        });
+
+        let finding = classify_agent_mail_reservations(&value);
+
+        assert_eq!(finding.severity, Severity::Warn);
+        assert!(finding.title.contains("conflicts"));
+    }
+
+    #[test]
+    fn swarm_agent_mail_reservations_pass_when_clear() {
+        let value = serde_json::json!({
+            "reservations": [],
+            "expiring": 0,
+            "conflicts": []
+        });
+
+        let finding = classify_agent_mail_reservations(&value);
+
+        assert_eq!(finding.severity, Severity::Pass);
+    }
+
+    #[test]
+    fn swarm_redacts_sensitive_probe_output() {
+        let outcome = CommandOutcome {
+            timed_out: false,
+            success: false,
+            status_code: Some(1),
+            stdout: "status ok\nOPENAI_API_KEY=secret-value\n".to_string(),
+            stderr: String::new(),
+        };
+
+        let snippet = redacted_output_snippet(&outcome);
+
+        assert!(snippet.contains("status ok"));
+        assert!(snippet.contains("[redacted sensitive output line]"));
+        assert!(!snippet.contains("secret-value"));
+    }
+
+    #[test]
+    fn swarm_df_parser_and_formatting_are_stable() {
+        let output = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100000 12000 88000 13% /data\n";
+
+        assert_eq!(parse_df_available_kb(output), Some(88_000));
+        assert_eq!(format_available_kb(88_000), "85.9 MiB");
+        assert_eq!(format_available_kb(11 * 1024 * 1024), "11.0 GiB");
     }
 
     #[test]

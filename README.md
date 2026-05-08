@@ -705,6 +705,7 @@ pi info pi-search-agent
 # Environment and extension diagnostics
 pi doctor
 pi doctor --only sessions --format json
+pi doctor --only swarm --format json
 pi doctor ./path/to/extension --policy safe --fix
 
 # Session storage migration (JSONL -> v2 sidecar store)
@@ -714,7 +715,7 @@ pi migrate ~/.pi/agent/sessions
 
 - `update-index` refreshes extension index metadata used by `search` and `info`.
 - `search` and `info` let you discover and inspect extension metadata without leaving the CLI.
-- `doctor` checks config, directories, auth, shell setup, sessions, and extension compatibility.
+- `doctor` checks config, directories, auth, shell setup, sessions, swarm coordination readiness, and extension compatibility.
 - `migrate` validates or creates the v2 session sidecar format for faster resume on larger histories.
 
 ---
@@ -953,7 +954,7 @@ The sections above compare mechanics. This section calls out concrete features p
 
 | Rust-port feature | Why it is useful/compelling |
 |-------------------|-----------------------------|
-| **`pi doctor` diagnostics command** (`text`/`json`/`markdown`, `--only`, `--fix`, extension compatibility checks) | Gives actionable environment + compatibility diagnostics, supports CI gating (non-zero on failures), and can auto-fix safe issues like missing dirs/permissions |
+| **`pi doctor` diagnostics command** (`text`/`json`/`markdown`, `--only`, `--fix`, swarm preflight, extension compatibility checks) | Gives actionable environment + compatibility diagnostics, supports CI gating (non-zero on failures), can auto-fix safe issues like missing dirs/permissions, and reports read-only multi-agent readiness before swarm work |
 | **Capability-gated extension policy profiles** (`safe` / `balanced` / `permissive`) with per-extension overrides | Lets operators run shared extensions with explicit capability boundaries instead of ambient full-system access |
 | **Secret-aware extension env filtering** (`pi.env()` blocklist for keys/tokens/secrets) | Reduces accidental credential exposure from extension code paths |
 | **Per-extension trust lifecycle + kill-switch audit trail** (`pending`/`acknowledged`/`trusted`/`killed`, `kill_switch`, `lift_kill_switch`) | Supports immediate containment, explicit operator provenance, and controlled re-entry after review |
