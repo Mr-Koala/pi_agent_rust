@@ -16,6 +16,14 @@ The module is intentionally library-first. Operators or later CLI surfaces can a
 
 Redaction is fail-closed for common sensitive fields. Keys containing `prompt`, `body`, `transcript`, `token`, `secret`, `password`, `authorization`, `bearer`, `cookie`, or `key` serialize as `[REDACTED]`; values that look like bearer tokens, API keys, or password/token assignments are also redacted. Store command names, artifact paths, status codes, and IDs rather than prompts, model outputs, or raw credentials.
 
+## Bounded summaries
+
+`SwarmActivityLedger::summarize` and `SwarmActivitySketch` derive schema `pi.swarm.activity_summary.v1` from the raw rows without replacing or mutating them. The raw JSONL remains the audit source; summaries are a bounded-memory view for dashboards, handoff notes, and swarm health checks.
+
+Summaries retain exact totals for event count, redacted entries, redacted fields, and activity kind counts. Hot spot lists are bounded independently for agents, beads, verification IDs, tools, providers/models, and selected detail key/value pairs. Ties sort deterministically by count descending and then key ascending. Long hot spot keys are truncated before retention so a single large detail value cannot dominate memory.
+
+Latency details named `latency_ms`, `duration_ms`, or `elapsed_ms` feed a bounded sample sketch. The summary reports retained sample count, min, p50, p95, p99, max, and a conservative rank-error bound. Sketches can be merged across runs; the receiving sketch keeps its configured capacities and downsamples merged latency samples back to the requested bound.
+
 Example row:
 
 ```json
