@@ -1953,10 +1953,11 @@ where
         (sso_region, sso_start_url, session_name.clone())
     } else {
         // Legacy form: sso_start_url is on the profile.
-        let sso_start_url = profile_sso_start_url.expect(
-            "is_sso_profile guarantees one of sso_session/sso_start_url is set; \
-             sso_session was None so sso_start_url must be Some",
-        );
+        let Some(sso_start_url) = profile_sso_start_url else {
+            return Err(Error::auth(format!(
+                "AWS profile '{profile}' looks like an SSO profile but is missing sso_start_url",
+            )));
+        };
         let sso_region = profile_section
             .get("sso_region")
             .map(|v| v.trim().to_string())
@@ -2034,6 +2035,17 @@ fn aws_sso_cache_filename(cache_key: &str) -> String {
     hex
 }
 
+fn aws_sso_cache_path(cache_dir: &Path, cache_key: &str) -> PathBuf {
+    let filename = aws_sso_cache_filename(cache_key);
+    debug_assert!(
+        filename
+            .strip_suffix(".json")
+            .is_some_and(|stem| stem.len() == 40 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
+    );
+    let path = cache_dir.join(filename); // ubs:ignore AWS SSO cache filename is SHA1 lower-hex + ".json", not a raw path segment.
+    path
+}
+
 #[derive(Debug, Deserialize)]
 struct SsoCachedToken {
     #[serde(rename = "accessToken")]
@@ -2043,7 +2055,7 @@ struct SsoCachedToken {
 }
 
 fn load_aws_sso_token_cache(cache_dir: &Path, cache_key: &str, profile: &str) -> Result<String> {
-    let path = cache_dir.join(aws_sso_cache_filename(cache_key));
+    let path = aws_sso_cache_path(cache_dir, cache_key);
     let text = std::fs::read_to_string(&path).map_err(|err| {
         Error::auth(format!(
             "AWS SSO token cache not found ({}: {err}); run: aws sso login --profile {profile}",
@@ -2668,12 +2680,7 @@ pub fn start_oauth_callback_server(redirect_uri: &str) -> Result<OAuthCallbackSe
             .next()
             .and_then(|line| {
                 // "GET /auth/callback?code=abc&state=xyz HTTP/1.1"
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    Some(parts[1].to_string())
-                } else {
-                    None
-                }
+                line.split_whitespace().nth(1).map(str::to_string)
             })
             .unwrap_or_default();
 
@@ -8503,7 +8510,6 @@ mod tests {
         std::fs::write(&config_path, config_text).expect("write config");
         let cache_dir = aws_dir.join("sso").join("cache");
         std::fs::create_dir_all(&cache_dir).expect("mkdir cache");
-        let cache_filename = aws_sso_cache_filename(cache_key);
         let mut payload = serde_json::json!({
             "accessToken": access_token,
             "region": "us-east-1",
@@ -8511,8 +8517,11 @@ mod tests {
         if let Some(expires_at) = expires_at {
             payload["expiresAt"] = serde_json::Value::String(expires_at.to_string());
         }
-        std::fs::write(cache_dir.join(&cache_filename), payload.to_string())
-            .expect("write cache file");
+        std::fs::write(
+            aws_sso_cache_path(&cache_dir, cache_key),
+            payload.to_string(),
+        )
+        .expect("write cache file");
         (credentials_path, config_path, cache_dir)
     }
 
