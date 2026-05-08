@@ -363,6 +363,24 @@ fn derive_root_cause_hints(
     hints.into_iter().collect()
 }
 
+fn observation_with_measured_trace_bytes(
+    mut observation: ReplayCaptureObservation,
+    bundle: &ReplayTraceBundle,
+) -> ReplayCaptureObservation {
+    if observation.trace_bytes == 0 {
+        observation.trace_bytes = encoded_trace_len(bundle);
+    }
+    observation
+}
+
+fn encoded_trace_len(bundle: &ReplayTraceBundle) -> u64 {
+    bundle
+        .encode_json()
+        .ok()
+        .and_then(|json| u64::try_from(json.len()).ok())
+        .unwrap_or(u64::MAX)
+}
+
 impl ReplayTraceBundle {
     /// Encode bundle as compact JSON.
     ///
@@ -949,6 +967,7 @@ impl ReplayRecorder {
         observation: ReplayCaptureObservation,
     ) -> Result<ReplayLaneResult, ReplayTraceValidationError> {
         let bundle = self.builder.build()?;
+        let observation = observation_with_measured_trace_bytes(observation, &bundle);
         let gate_report = evaluate_replay_capture_gate(self.config.budget, observation);
         let diagnostic = build_replay_diagnostic_snapshot(&bundle, gate_report, None)?;
 
@@ -973,6 +992,7 @@ impl ReplayRecorder {
         reference: &ReplayTraceBundle,
     ) -> Result<(ReplayLaneResult, ReplayComparisonResult), ReplayTraceValidationError> {
         let bundle = self.builder.build()?;
+        let observation = observation_with_measured_trace_bytes(observation, &bundle);
         let gate_report = evaluate_replay_capture_gate(self.config.budget, observation);
         let divergence_opt = first_divergence(reference, &bundle)?;
         let diagnostic =
@@ -2023,6 +2043,34 @@ mod tests {
         );
         // Bundle is still present even when gated
         assert_eq!(result.bundle.events.len(), 1);
+    }
+
+    #[test]
+    fn recorder_measures_trace_bytes_when_observation_omits_size() {
+        let mut config = super::ReplayLaneConfig::new(ReplayCaptureBudget {
+            capture_enabled: true,
+            max_overhead_per_mille: 1_000,
+            max_trace_bytes: 1,
+        });
+        config.insert_metadata("lane", "shadow");
+        let mut recorder = super::ReplayRecorder::new("trace-sized", config);
+        recorder.tick();
+        recorder.record_scheduled("ext.a", "req-1", BTreeMap::new());
+
+        let result = recorder
+            .finish(ReplayCaptureObservation {
+                baseline_micros: 1_000,
+                captured_micros: 1_000,
+                trace_bytes: 0,
+            })
+            .expect("finish");
+
+        assert!(!result.gate_report.capture_allowed);
+        assert_eq!(
+            result.gate_report.reason,
+            ReplayCaptureGateReason::DisabledByTraceBudget
+        );
+        assert!(result.gate_report.observed_trace_bytes > 1);
     }
 
     #[test]

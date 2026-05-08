@@ -21463,30 +21463,35 @@ pub async fn dispatch_host_call_shared(
             let mut recorder =
                 crate::extension_replay::ReplayRecorder::new(trace_id, replay_config);
 
-            // Record the scheduled event.
+            recorder.tick();
             recorder.record_scheduled(
                 ext_id,
                 call_id,
-                std::collections::BTreeMap::from([
-                    ("capability".to_string(), capability.to_string()),
-                    ("method".to_string(), method.to_string()),
-                ]),
+                replay_scheduled_attributes(
+                    &call,
+                    capability,
+                    method,
+                    &params_hash,
+                    &args_shape_hash,
+                    resource_target_class,
+                    policy_profile,
+                ),
             );
             recorder.tick();
-
-            // Record the policy decision.
-            recorder.record(
+            recorder.record_queue_accepted(
                 ext_id,
                 call_id,
-                crate::extension_replay::ReplayEventKind::PolicyDecision,
-                std::collections::BTreeMap::from([
-                    ("decision".to_string(), format!("{decision:?}")),
-                    ("reason".to_string(), reason.clone()),
-                ]),
+                replay_queue_attributes(lane_execution.as_ref(), manager),
             );
             recorder.tick();
 
-            // Record the outcome.
+            recorder.record_policy_decision(
+                ext_id,
+                call_id,
+                replay_policy_attributes(decision, &reason, runtime_risk_decision.as_ref()),
+            );
+            recorder.tick();
+
             let outcome_kind = if outcome_error_code.is_some() {
                 crate::extension_replay::ReplayEventKind::Failed
             } else {
@@ -21496,16 +21501,13 @@ pub async fn dispatch_host_call_shared(
                 ext_id,
                 call_id,
                 outcome_kind,
-                std::collections::BTreeMap::from([(
-                    "duration_ms".to_string(),
-                    duration_ms.to_string(),
-                )]),
+                replay_outcome_attributes(&outcome, duration_ms, resource_target_class),
             );
 
             let observation = crate::extension_replay::ReplayCaptureObservation {
                 baseline_micros: duration_ms.saturating_mul(1000),
                 captured_micros: duration_ms.saturating_mul(1000),
-                trace_bytes: 0, // negligible overhead
+                trace_bytes: 0,
             };
             if let Ok(result) = recorder.finish(observation) {
                 if result.gate_report.capture_allowed {
@@ -21516,6 +21518,238 @@ pub async fn dispatch_host_call_shared(
     }
 
     outcome_to_host_result(call_id, &outcome)
+}
+
+const REPLAY_CONTEXT_INDEX_KEYS: &[(&str, &str)] = &[
+    ("transcript_index", "transcript_index"),
+    ("transcriptIndex", "transcript_index"),
+    ("turn_index", "turn_index"),
+    ("turnIndex", "turn_index"),
+    ("message_index", "message_index"),
+    ("messageIndex", "message_index"),
+    ("event_index", "event_index"),
+    ("eventIndex", "event_index"),
+    ("session_entry_index", "session_entry_index"),
+    ("sessionEntryIndex", "session_entry_index"),
+];
+
+fn replay_scheduled_attributes(
+    call: &HostCallPayload,
+    capability: &str,
+    method: &str,
+    params_hash: &str,
+    args_shape_hash: &str,
+    resource_target_class: &str,
+    policy_profile: &str,
+) -> BTreeMap<String, String> {
+    let mut attrs = BTreeMap::from([
+        ("capability".to_string(), capability.to_string()),
+        ("method".to_string(), method.to_string()),
+        ("params_hash".to_string(), params_hash.to_string()),
+        ("args_shape_hash".to_string(), args_shape_hash.to_string()),
+        (
+            "resource_target_class".to_string(),
+            resource_target_class.to_string(),
+        ),
+        ("policy_profile".to_string(), policy_profile.to_string()),
+        (
+            "cancel_token_present".to_string(),
+            call.cancel_token.is_some().to_string(),
+        ),
+    ]);
+    if let Some(timeout_ms) = call.timeout_ms {
+        attrs.insert("timeout_ms".to_string(), timeout_ms.to_string());
+    }
+    insert_replay_context_indexes(&mut attrs, call.context.as_ref());
+    attrs
+}
+
+fn replay_queue_attributes(
+    lane_execution: Option<&HostcallLaneExecution>,
+    manager: &ExtensionManager,
+) -> BTreeMap<String, String> {
+    let mut attrs = BTreeMap::new();
+    match lane_execution {
+        Some(meta) => {
+            attrs.insert("dispatch_status".to_string(), "accepted".to_string());
+            attrs.insert("selected_lane".to_string(), meta.lane.as_str().to_string());
+            attrs.insert(
+                "lane_decision_reason".to_string(),
+                meta.decision_reason.clone(),
+            );
+            attrs.insert("lane_matrix_key".to_string(), meta.matrix_key.to_string());
+            attrs.insert(
+                "lane_dispatch_latency_ms".to_string(),
+                meta.dispatch_latency_ms.to_string(),
+            );
+            if let Some(reason) = &meta.fallback_reason {
+                attrs.insert("lane_fallback_reason".to_string(), reason.clone());
+                attrs.insert("backpressure_decision".to_string(), reason.clone());
+            }
+        }
+        None => {
+            attrs.insert(
+                "dispatch_status".to_string(),
+                "blocked_before_lane".to_string(),
+            );
+        }
+    }
+
+    if let Some(telemetry) = manager.reactor_telemetry() {
+        attrs.insert(
+            "reactor_shard_count".to_string(),
+            telemetry.shard_count.to_string(),
+        );
+        attrs.insert(
+            "reactor_lane_capacity".to_string(),
+            telemetry.lane_capacity.to_string(),
+        );
+        attrs.insert(
+            "reactor_queue_depth_current_max".to_string(),
+            telemetry
+                .queue_depths
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or_default()
+                .to_string(),
+        );
+        attrs.insert(
+            "reactor_queue_depth_observed_max".to_string(),
+            telemetry
+                .max_queue_depths
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or_default()
+                .to_string(),
+        );
+        attrs.insert(
+            "reactor_rejected_enqueues".to_string(),
+            telemetry.rejected_enqueues.to_string(),
+        );
+        attrs.insert(
+            "reactor_total_dispatched".to_string(),
+            telemetry.total_dispatched.to_string(),
+        );
+        attrs.insert(
+            "reactor_overloaded".to_string(),
+            telemetry.overloaded.to_string(),
+        );
+        if let Some(reason) = telemetry.overload_reason {
+            attrs.insert("reactor_overload_reason".to_string(), reason);
+        }
+    }
+
+    attrs
+}
+
+fn replay_policy_attributes(
+    decision: PolicyDecision,
+    reason: &str,
+    runtime_risk_decision: Option<&RuntimeRiskDecision>,
+) -> BTreeMap<String, String> {
+    let mut attrs = BTreeMap::from([
+        ("decision".to_string(), format!("{decision:?}")),
+        ("reason".to_string(), reason.to_string()),
+    ]);
+    if let Some(risk) = runtime_risk_decision {
+        attrs.insert(
+            "runtime_risk_action".to_string(),
+            format!("{:?}", risk.action),
+        );
+        attrs.insert("runtime_risk_reason".to_string(), risk.reason.clone());
+        attrs.insert(
+            "runtime_risk_score".to_string(),
+            format!("{:.6}", risk.risk_score),
+        );
+        attrs.insert(
+            "runtime_risk_state".to_string(),
+            format!("{:?}", risk.state_label),
+        );
+        attrs.insert(
+            "runtime_risk_drift_detected".to_string(),
+            risk.drift_detected.to_string(),
+        );
+        attrs.insert("runtime_risk_triggers".to_string(), risk.triggers.join(","));
+        if let Some(fallback_reason) = &risk.fallback_reason {
+            attrs.insert(
+                "runtime_risk_fallback_reason".to_string(),
+                fallback_reason.clone(),
+            );
+        }
+    }
+    attrs
+}
+
+fn replay_outcome_attributes(
+    outcome: &HostcallOutcome,
+    duration_ms: u64,
+    resource_target_class: &str,
+) -> BTreeMap<String, String> {
+    let mut attrs = BTreeMap::from([
+        ("duration_ms".to_string(), duration_ms.to_string()),
+        (
+            "resource_target_class".to_string(),
+            resource_target_class.to_string(),
+        ),
+    ]);
+    match outcome {
+        HostcallOutcome::Success(_) => {
+            attrs.insert("outcome_kind".to_string(), "success".to_string());
+            attrs.insert("is_error".to_string(), "false".to_string());
+        }
+        HostcallOutcome::StreamChunk {
+            sequence, is_final, ..
+        } => {
+            attrs.insert("outcome_kind".to_string(), "stream_chunk".to_string());
+            attrs.insert("is_error".to_string(), "false".to_string());
+            attrs.insert("stream_sequence".to_string(), sequence.to_string());
+            attrs.insert("stream_is_final".to_string(), is_final.to_string());
+        }
+        HostcallOutcome::Error { code, .. } => {
+            attrs.insert("outcome_kind".to_string(), "error".to_string());
+            attrs.insert("is_error".to_string(), "true".to_string());
+            attrs.insert("error_code".to_string(), code.clone());
+        }
+    }
+    attrs
+}
+
+fn insert_replay_context_indexes(attrs: &mut BTreeMap<String, String>, context: Option<&Value>) {
+    let Some(context) = context.and_then(Value::as_object) else {
+        return;
+    };
+    for (source_key, target_key) in REPLAY_CONTEXT_INDEX_KEYS {
+        if let Some(value) = context
+            .get(*source_key)
+            .and_then(replay_context_index_value)
+        {
+            attrs.insert((*target_key).to_string(), value);
+        }
+    }
+}
+
+fn replay_context_index_value(value: &Value) -> Option<String> {
+    if let Some(value) = value.as_u64() {
+        return Some(value.to_string());
+    }
+    if let Some(value) = value.as_i64() {
+        return Some(value.to_string());
+    }
+    value.as_str().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.len() <= 64
+            && !trimmed.is_empty()
+            && trimmed
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
+        {
+            Some(trimmed.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 // ============================================================================
@@ -43667,6 +43901,118 @@ mod tests {
         );
         assert!(entry.marshalling_fallback_reason.is_none());
         assert_eq!(entry.marshalling_fallback_count, 0);
+    }
+
+    #[test]
+    fn replay_bundle_records_lane_pressure_resource_and_transcript_metadata() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("replay_pressure.txt");
+        std::fs::write(&file, "replay-pressure").expect("write test file");
+
+        let tools = ToolRegistry::new(&["read"], dir.path(), None);
+        let http = HttpConnector::with_defaults();
+        let policy = permissive_policy();
+        let manager = ExtensionManager::new();
+        manager.enable_replay(crate::extension_replay::ReplayLaneConfig::new(
+            crate::extension_replay::ReplayCaptureBudget {
+                capture_enabled: true,
+                max_overhead_per_mille: 1_000,
+                max_trace_bytes: 1_000_000,
+            },
+        ));
+        manager.enable_hostcall_reactor(HostcallReactorConfig {
+            shard_count: 1,
+            lane_capacity: 1,
+            core_ids: None,
+        });
+        manager
+            .reactor_submit(
+                "prefill-replay-pressure".to_string(),
+                CommonHostcallOpcode::ToolRead,
+                json!({}),
+            )
+            .expect("reactor enabled")
+            .expect("prefill lane");
+
+        let ctx = HostCallContext {
+            runtime_name: "test",
+            extension_id: Some("ext.replay.pressure"),
+            tools: &tools,
+            http: &http,
+            manager: Some(manager.clone()),
+            policy: &policy,
+            js_runtime: None,
+            interceptor: None,
+        };
+        let mut payload =
+            typed_tool_read_payload("replay-pressure", file.to_str().expect("utf-8 path"));
+        payload.context = Some(json!({
+            "transcript_index": 7,
+            "messageIndex": 3,
+            "prompt": "must-not-enter-replay"
+        }));
+
+        let result = run_async(async { dispatch_host_call_shared(&ctx, payload).await });
+        assert!(
+            !result.is_error,
+            "dispatch must succeed: {:?}",
+            result.error
+        );
+
+        let bundles = manager.drain_replay_bundles();
+        assert_eq!(bundles.len(), 1);
+        let events = &bundles[0].events;
+        assert_eq!(events.len(), 4);
+
+        let scheduled =
+            replay_event_attributes(events, crate::extension_replay::ReplayEventKind::Scheduled);
+        assert_replay_attrs(
+            scheduled,
+            &[
+                ("resource_target_class", "filesystem.tool"),
+                ("transcript_index", "7"),
+                ("message_index", "3"),
+            ],
+        );
+        assert!(!scheduled.contains_key("prompt"));
+
+        assert_replay_attrs(
+            replay_event_attributes(
+                events,
+                crate::extension_replay::ReplayEventKind::QueueAccepted,
+            ),
+            &[
+                ("selected_lane", "compat"),
+                ("lane_fallback_reason", "reactor_lane_overflow"),
+                ("reactor_queue_depth_observed_max", "1"),
+                ("reactor_rejected_enqueues", "1"),
+                ("reactor_overloaded", "true"),
+            ],
+        );
+        assert_replay_attrs(
+            replay_event_attributes(events, crate::extension_replay::ReplayEventKind::Completed),
+            &[
+                ("outcome_kind", "success"),
+                ("resource_target_class", "filesystem.tool"),
+            ],
+        );
+    }
+
+    fn replay_event_attributes(
+        events: &[crate::extension_replay::ReplayTraceEvent],
+        kind: crate::extension_replay::ReplayEventKind,
+    ) -> &BTreeMap<String, String> {
+        &events
+            .iter()
+            .find(|event| event.kind == kind)
+            .expect("replay event")
+            .attributes
+    }
+
+    fn assert_replay_attrs(attrs: &BTreeMap<String, String>, expected: &[(&str, &str)]) {
+        for (key, value) in expected {
+            assert_eq!(attrs.get(*key).map(String::as_str), Some(*value), "{key}");
+        }
     }
 
     #[test]
