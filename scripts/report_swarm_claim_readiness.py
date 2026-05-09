@@ -23,7 +23,14 @@ from typing import Any
 
 
 REPORT_SCHEMA = "pi.swarm.claim_readiness_report.v1"
+STALE_CLAIM_REPORT_SCHEMA = "pi.swarm.stale_claim_report.v1"
 DEFAULT_MAX_AGE_DAYS = 14
+DEFAULT_STALE_CLAIM_AFTER_HOURS = 24
+DEFAULT_STALE_CLAIM_ACTIVITY_FRESH_HOURS = 6
+DEFAULT_STALE_CLAIM_ACTIVITY_PATHS = (
+    "tests/full_suite_gate/swarm_activity_events.jsonl",
+    "tests/full_suite_gate/swarm_activity_ledger.jsonl",
+)
 
 DEFAULT_TIMESTAMP_PATHS = (
     "generated_at",
@@ -120,6 +127,14 @@ class EvidenceCheck:
             "provenance_value": self.provenance_value,
             "issues": [issue.to_json() for issue in self.issues],
         }
+
+
+@dataclass(frozen=True)
+class ClaimActivityEvidence:
+    bead_id: str
+    timestamp: datetime
+    source: str
+    agent_name: str | None
 
 
 EVIDENCE_SPECS = (
@@ -397,6 +412,285 @@ def load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     return payload, None
 
 
+def load_jsonl_objects(path: Path) -> tuple[list[dict[str, Any]], str | None]:
+    objects: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    return objects, f"{path}:{line_number}: invalid JSON: {exc}"
+                if isinstance(payload, dict):
+                    payload["_source_line"] = line_number
+                    objects.append(payload)
+    except UnicodeDecodeError:
+        return objects, f"{path}: artifact is not UTF-8"
+    except OSError as exc:
+        return objects, f"{path}: failed to read artifact: {exc}"
+    return objects, None
+
+
+def parse_epoch_millis(raw: Any) -> datetime | None:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(raw) / 1000.0, tz=timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped.isdigit():
+            try:
+                return datetime.fromtimestamp(int(stripped) / 1000.0, tz=timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
+    return None
+
+
+def first_timestamp(payload: dict[str, Any]) -> datetime | None:
+    timestamp_ms = parse_epoch_millis(get_path(payload, "timestamp_ms"))
+    if timestamp_ms is not None:
+        return timestamp_ms
+    _, raw = first_path(
+        payload,
+        (
+            "timestamp",
+            "created_ts",
+            "created_at",
+            "updated_at",
+            "details.timestamp",
+            "details.created_ts",
+            "details.updated_at",
+        ),
+    )
+    return parse_iso_datetime(raw)
+
+
+def collect_claim_activity(
+    repo_root: Path,
+    activity_paths: tuple[str, ...],
+) -> tuple[dict[str, ClaimActivityEvidence], list[str], list[str]]:
+    latest: dict[str, ClaimActivityEvidence] = {}
+    used_paths: list[str] = []
+    warnings: list[str] = []
+    for relative_path in activity_paths:
+        full_path = repo_root / relative_path
+        if not full_path.exists():
+            continue
+        used_paths.append(relative_path)
+        rows, error = load_jsonl_objects(full_path)
+        if error is not None:
+            warnings.append(error)
+        for row in rows:
+            bead_id = get_path(row, "ids.bead_id") or row.get("bead_id")
+            if not isinstance(bead_id, str) or not bead_id.strip():
+                continue
+            timestamp = first_timestamp(row)
+            if timestamp is None:
+                continue
+            agent_name = get_path(row, "ids.agent_name") or row.get("agent_name")
+            if not isinstance(agent_name, str):
+                agent_name = None
+            line_number = row.get("_source_line", "?")
+            kind = row.get("kind") or row.get("phase") or "activity"
+            source = f"{relative_path}:{line_number}:{kind}"
+            evidence = ClaimActivityEvidence(
+                bead_id=bead_id,
+                timestamp=timestamp,
+                source=source,
+                agent_name=agent_name,
+            )
+            current = latest.get(bead_id)
+            if current is None or evidence.timestamp > current.timestamp:
+                latest[bead_id] = evidence
+    return latest, used_paths, warnings
+
+
+def read_beads_records(repo_root: Path) -> tuple[list[dict[str, Any]], str | None, str]:
+    relative_path = ".beads/issues.jsonl"
+    rows, error = load_jsonl_objects(repo_root / relative_path)
+    return rows, error, relative_path
+
+
+def issue_assignee(issue: dict[str, Any]) -> str | None:
+    raw = issue.get("assignee") or issue.get("assigned_to") or issue.get("owner")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def classify_stale_claim(
+    issue: dict[str, Any],
+    *,
+    now: datetime,
+    stale_after_hours: int,
+    activity_fresh_after_hours: int,
+    activity: ClaimActivityEvidence | None,
+    bead_source: str,
+) -> dict[str, Any]:
+    bead_id = str(issue.get("id") or "")
+    title = str(issue.get("title") or "")
+    status = str(issue.get("status") or "")
+    assignee = issue_assignee(issue)
+    updated_at_raw = issue.get("updated_at")
+    updated_at = parse_iso_datetime(updated_at_raw)
+    bead_age_hours: float | None = None
+    latest_activity_age_hours: float | None = None
+    latest_activity_at: str | None = None
+    evidence_source = bead_source
+    reasons: list[str] = []
+
+    if updated_at is not None:
+        bead_age_hours = max(0.0, (now - updated_at).total_seconds() / 3600.0)
+    else:
+        reasons.append("bead updated_at is missing or unparseable")
+
+    if activity is not None:
+        latest_activity_at = format_datetime(activity.timestamp)
+        latest_activity_age_hours = max(0.0, (now - activity.timestamp).total_seconds() / 3600.0)
+        evidence_source = activity.source
+
+    if updated_at is None:
+        classification = "missing_evidence"
+        recommended_action = (
+            f"Report-only: do not reopen or reassign {bead_id}; inspect Beads and Agent Mail "
+            "for owner evidence, then update the bead manually only after confirmation."
+        )
+    elif bead_age_hours < stale_after_hours:
+        classification = "active"
+        recommended_action = (
+            f"No status change for {bead_id}; bead updated {bead_age_hours:.1f}h ago, "
+            f"below stale threshold {stale_after_hours}h."
+        )
+    elif (
+        activity is not None
+        and latest_activity_age_hours is not None
+        and latest_activity_age_hours < activity_fresh_after_hours
+    ):
+        classification = "active_recent_coordination"
+        reasons.append(
+            f"coordination activity is {latest_activity_age_hours:.1f}h old, "
+            f"below activity freshness threshold {activity_fresh_after_hours}h"
+        )
+        recommended_action = (
+            f"No reopen for {bead_id}; recent coordination evidence from {activity.source} "
+            "indicates the claim is still active."
+        )
+    elif assignee is None:
+        classification = "stale_unassigned"
+        reasons.append("in_progress bead has no assignee")
+        recommended_action = (
+            f"Report-only: consider `br update {bead_id} --status open` only after confirming "
+            "there is no owner in Agent Mail or the activity ledger; no automatic change was made."
+        )
+    else:
+        classification = "stale_needs_owner_follow_up"
+        reasons.append(f"bead update age {bead_age_hours:.1f}h meets threshold {stale_after_hours}h")
+        if activity is None:
+            reasons.append("no optional coordination activity evidence was available")
+        else:
+            reasons.append(
+                f"latest coordination activity age {latest_activity_age_hours:.1f}h "
+                f"meets freshness threshold {activity_fresh_after_hours}h"
+            )
+        recommended_action = (
+            f"Report-only: message {assignee} in thread {bead_id}; run "
+            f"`br update {bead_id} --status open` only after confirming the owner is stale. "
+            "No automatic reopen or reassignment was performed."
+        )
+
+    return {
+        "bead_id": bead_id,
+        "title": title,
+        "status": status,
+        "assignee": assignee,
+        "last_update": format_datetime(updated_at),
+        "bead_age_hours": round(bead_age_hours, 2) if bead_age_hours is not None else None,
+        "latest_activity_at": latest_activity_at,
+        "latest_activity_age_hours": (
+            round(latest_activity_age_hours, 2)
+            if latest_activity_age_hours is not None
+            else None
+        ),
+        "evidence_source": evidence_source,
+        "classification": classification,
+        "recommended_operator_action": recommended_action,
+        "reasons": reasons,
+    }
+
+
+def build_stale_claim_report(
+    repo_root: Path,
+    *,
+    now: datetime,
+    stale_after_hours: int,
+    activity_fresh_after_hours: int,
+    activity_paths: tuple[str, ...],
+) -> dict[str, Any]:
+    rows, beads_error, beads_path = read_beads_records(repo_root)
+    activity_by_bead, used_activity_paths, activity_warnings = collect_claim_activity(
+        repo_root,
+        activity_paths,
+    )
+    warnings = activity_warnings[:]
+    if beads_error is not None:
+        warnings.append(beads_error)
+
+    items = [
+        classify_stale_claim(
+            issue,
+            now=now,
+            stale_after_hours=stale_after_hours,
+            activity_fresh_after_hours=activity_fresh_after_hours,
+            activity=activity_by_bead.get(str(issue.get("id") or "")),
+            bead_source=beads_path,
+        )
+        for issue in rows
+        if issue.get("status") == "in_progress"
+    ]
+    classifications: dict[str, int] = {}
+    for item in items:
+        classification = item["classification"]
+        classifications[classification] = classifications.get(classification, 0) + 1
+
+    stale_count = sum(
+        count
+        for classification, count in classifications.items()
+        if classification.startswith("stale_")
+    )
+    missing_evidence_count = classifications.get("missing_evidence", 0)
+    status = "needs_coordination" if stale_count or missing_evidence_count or warnings else "ready"
+    return {
+        "schema": STALE_CLAIM_REPORT_SCHEMA,
+        "status": status,
+        "policy": "report_only_no_auto_reopen_or_reassign",
+        "thresholds": {
+            "stale_after_hours": stale_after_hours,
+            "activity_fresh_after_hours": activity_fresh_after_hours,
+        },
+        "source_paths": {
+            "beads_ledger": beads_path,
+            "activity_jsonl": used_activity_paths,
+        },
+        "warnings": warnings,
+        "summary": {
+            "in_progress_count": len(items),
+            "active_count": classifications.get("active", 0)
+            + classifications.get("active_recent_coordination", 0),
+            "stale_count": stale_count,
+            "unassigned_count": classifications.get("stale_unassigned", 0),
+            "missing_evidence_count": missing_evidence_count,
+            "classifications": classifications,
+        },
+        "items": items,
+    }
+
+
 def check_spec(
     repo_root: Path,
     spec: EvidenceSpec,
@@ -544,11 +838,21 @@ def build_report(
     *,
     now: datetime | None = None,
     max_age_days: int = DEFAULT_MAX_AGE_DAYS,
+    stale_claim_after_hours: int = DEFAULT_STALE_CLAIM_AFTER_HOURS,
+    stale_claim_activity_fresh_hours: int = DEFAULT_STALE_CLAIM_ACTIVITY_FRESH_HOURS,
+    stale_claim_activity_paths: tuple[str, ...] = DEFAULT_STALE_CLAIM_ACTIVITY_PATHS,
 ) -> dict[str, Any]:
     now = as_utc(now or datetime.now(timezone.utc))
     max_age = timedelta(days=max_age_days)
     checks = [check_spec(repo_root, spec, now, max_age) for spec in EVIDENCE_SPECS]
     add_provenance_mismatches(checks)
+    stale_claims = build_stale_claim_report(
+        repo_root,
+        now=now,
+        stale_after_hours=stale_claim_after_hours,
+        activity_fresh_after_hours=stale_claim_activity_fresh_hours,
+        activity_paths=stale_claim_activity_paths,
+    )
 
     blocking_issues = [
         {
@@ -572,6 +876,7 @@ def build_report(
         "blocking_issue_count": len(blocking_issues),
         "categories": category_summary(checks),
         "artifacts": [check.to_json() for check in checks],
+        "stale_claims": stale_claims,
         "blocking_issues": blocking_issues,
     }
 
@@ -600,6 +905,23 @@ def print_text_report(report: dict[str, Any]) -> None:
         for issue in artifact["issues"]:
             marker = "BLOCK" if issue["blocking"] else "INFO"
             print(f"    {marker} {issue['kind']}: {issue['detail']}")
+    stale_claims = report["stale_claims"]
+    print("")
+    print("stale in-progress claims:")
+    print(
+        f"  {stale_claims['status']}: "
+        f"{stale_claims['summary']['in_progress_count']} in_progress, "
+        f"{stale_claims['summary']['stale_count']} stale, "
+        f"{stale_claims['summary']['missing_evidence_count']} missing evidence"
+    )
+    for item in stale_claims["items"]:
+        print(
+            f"  {item['classification']}: {item['bead_id']} "
+            f"assignee={item['assignee'] or 'none'} "
+            f"last_update={item['last_update'] or 'unknown'} "
+            f"source={item['evidence_source']}"
+        )
+        print(f"    action: {item['recommended_operator_action']}")
     if report["blocking_issues"]:
         print("")
         print("release-facing claim blockers:")
@@ -685,6 +1007,35 @@ def make_complete_fixture(
             write_artifact(repo_root, spec.path, payload, mtime=now)
 
 
+def write_beads_ledger(repo_root: Path, issues: list[dict[str, Any]]) -> None:
+    ledger_path = repo_root / ".beads" / "issues.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    with ledger_path.open("w", encoding="utf-8") as handle:
+        for issue in issues:
+            handle.write(json.dumps(issue, sort_keys=True))
+            handle.write("\n")
+
+
+def write_activity_jsonl(
+    repo_root: Path,
+    relative_path: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    full_path = repo_root / relative_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    with full_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True))
+            handle.write("\n")
+
+
+def stale_claim_item(report: dict[str, Any], bead_id: str) -> dict[str, Any]:
+    for item in report["stale_claims"]["items"]:
+        if item["bead_id"] == bead_id:
+            return item
+    raise AssertionError(f"missing stale claim item for {bead_id}")
+
+
 def assert_condition(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -751,6 +1102,132 @@ def run_self_test() -> int:
             historical_path not in blocker_paths,
             "historical snapshots should not block release-facing gate status",
         )
+
+        repo_root = fixture_root()
+        make_complete_fixture(repo_root, now)
+        write_beads_ledger(
+            repo_root,
+            [
+                {
+                    "id": "bd-active",
+                    "title": "Fresh owner",
+                    "status": "in_progress",
+                    "assignee": "ActiveAgent",
+                    "updated_at": format_datetime(now - timedelta(hours=1)),
+                },
+                {
+                    "id": "bd-stale",
+                    "title": "Old owner",
+                    "status": "in_progress",
+                    "assignee": "OldAgent",
+                    "updated_at": format_datetime(now - timedelta(hours=30)),
+                },
+                {
+                    "id": "bd-unassigned",
+                    "title": "No owner",
+                    "status": "in_progress",
+                    "updated_at": format_datetime(now - timedelta(hours=30)),
+                },
+                {
+                    "id": "bd-missing",
+                    "title": "Missing updated_at",
+                    "status": "in_progress",
+                    "assignee": "MissingAgent",
+                },
+            ],
+        )
+        report = build_report(repo_root, now=now)
+        stale_claims = report["stale_claims"]
+        assert_condition(
+            stale_claims["policy"] == "report_only_no_auto_reopen_or_reassign",
+            "stale claim report must remain report-only",
+        )
+        assert_condition(
+            stale_claim_item(report, "bd-active")["classification"] == "active",
+            "recent in-progress work should be active",
+        )
+        stale_item = stale_claim_item(report, "bd-stale")
+        assert_condition(
+            stale_item["classification"] == "stale_needs_owner_follow_up",
+            "old assigned in-progress work should request owner follow-up",
+        )
+        assert_condition(
+            "message OldAgent" in stale_item["recommended_operator_action"],
+            "assigned stale claim should include exact owner follow-up action",
+        )
+        unassigned_item = stale_claim_item(report, "bd-unassigned")
+        assert_condition(
+            unassigned_item["classification"] == "stale_unassigned",
+            "old unassigned in-progress work should be reported separately",
+        )
+        assert_condition(
+            "br update bd-unassigned --status open"
+            in unassigned_item["recommended_operator_action"],
+            "unassigned stale claim should include exact reopen command",
+        )
+        missing_item = stale_claim_item(report, "bd-missing")
+        assert_condition(
+            missing_item["classification"] == "missing_evidence",
+            "missing updated_at should be missing evidence",
+        )
+        assert_condition(
+            "do not reopen or reassign bd-missing"
+            in missing_item["recommended_operator_action"],
+            "missing evidence action should fail closed",
+        )
+
+        repo_root = fixture_root()
+        make_complete_fixture(repo_root, now)
+        write_beads_ledger(
+            repo_root,
+            [
+                {
+                    "id": "bd-coordinated",
+                    "title": "Old bead with fresh mail",
+                    "status": "in_progress",
+                    "assignee": "MailAgent",
+                    "updated_at": format_datetime(now - timedelta(hours=30)),
+                },
+            ],
+        )
+        activity_path = "tests/full_suite_gate/swarm_activity_events.jsonl"
+        write_activity_jsonl(
+            repo_root,
+            activity_path,
+            [
+                {
+                    "schema": "pi.swarm.activity_ledger.v1",
+                    "kind": "agent_mail",
+                    "timestamp_ms": int((now - timedelta(hours=2)).timestamp() * 1000),
+                    "ids": {
+                        "bead_id": "bd-coordinated",
+                        "agent_name": "MailAgent",
+                    },
+                    "summary": "owner posted fresh status",
+                },
+            ],
+        )
+        report = build_report(
+            repo_root,
+            now=now,
+            stale_claim_activity_fresh_hours=6,
+            stale_claim_activity_paths=(activity_path,),
+        )
+        coordinated_item = stale_claim_item(report, "bd-coordinated")
+        assert_condition(
+            coordinated_item["classification"] == "active_recent_coordination",
+            "fresh optional activity should keep an old bead active",
+        )
+        assert_condition(
+            coordinated_item["evidence_source"].startswith(f"{activity_path}:1:agent_mail"),
+            "activity-backed classification should name the evidence source",
+        )
+
+        report = build_report(repo_root, now=now, stale_claim_after_hours=48)
+        assert_condition(
+            stale_claim_item(report, "bd-coordinated")["classification"] == "active",
+            "configured stale threshold should control bead-age classification",
+        )
     except AssertionError as exc:
         print(f"SELF-TEST FAIL: {exc}")
         return 2
@@ -778,6 +1255,24 @@ def parse_args() -> argparse.Namespace:
         help="freshness threshold for generated release-facing artifacts",
     )
     parser.add_argument(
+        "--stale-claim-after-hours",
+        type=int,
+        default=DEFAULT_STALE_CLAIM_AFTER_HOURS,
+        help="age threshold for reporting in-progress beads as stale",
+    )
+    parser.add_argument(
+        "--stale-claim-activity-fresh-hours",
+        type=int,
+        default=DEFAULT_STALE_CLAIM_ACTIVITY_FRESH_HOURS,
+        help="freshness window for optional Agent Mail or activity-ledger evidence",
+    )
+    parser.add_argument(
+        "--stale-claim-activity-jsonl",
+        action="append",
+        default=None,
+        help="optional repo-relative JSONL activity source with bead IDs and timestamps",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="emit machine-readable JSON report",
@@ -799,9 +1294,26 @@ def main() -> int:
     args = parse_args()
     if args.self_test:
         return run_self_test()
+    if args.stale_claim_after_hours < 0:
+        print("ERROR: --stale-claim-after-hours must be non-negative", file=sys.stderr)
+        return 2
+    if args.stale_claim_activity_fresh_hours < 0:
+        print("ERROR: --stale-claim-activity-fresh-hours must be non-negative", file=sys.stderr)
+        return 2
 
     repo_root = args.repo_root.resolve()
-    report = build_report(repo_root, max_age_days=args.max_age_days)
+    activity_paths = (
+        tuple(args.stale_claim_activity_jsonl)
+        if args.stale_claim_activity_jsonl is not None
+        else DEFAULT_STALE_CLAIM_ACTIVITY_PATHS
+    )
+    report = build_report(
+        repo_root,
+        max_age_days=args.max_age_days,
+        stale_claim_after_hours=args.stale_claim_after_hours,
+        stale_claim_activity_fresh_hours=args.stale_claim_activity_fresh_hours,
+        stale_claim_activity_paths=activity_paths,
+    )
     if args.json:
         json.dump(report, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
