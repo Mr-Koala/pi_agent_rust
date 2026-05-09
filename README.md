@@ -112,6 +112,10 @@ Example: `*(from [artifact-path], run [correlation-id])*`
 
 CI checks both file freshness and artifact content so stale, no-data, or
 correlation-mismatched evidence cannot back user-facing performance claims.
+The README evidence checker reports line-numbered proof obligations for cited
+claims and extracts claim-gated performance phrases for reviewer audit. Explicit
+historical snapshot citations are mapped separately and do not satisfy current
+release-facing claims.
 
 ## How We Made It So Fast
 

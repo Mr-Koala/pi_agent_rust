@@ -39,11 +39,31 @@ class CitationCheck(NamedTuple):
     """Result of checking a single citation."""
     artifact_path: str
     correlation_id: str
+    line_number: int
+    claim_surface: str
     file_exists: bool
     file_mtime: datetime | None
     days_old: float | None
     is_stale: bool
     content_errors: tuple[str, ...]
+
+
+class ClaimObligation(NamedTuple):
+    """README claim mapped to the evidence artifact that must prove it."""
+    line_number: int
+    claim_text: str
+    artifact_path: str
+    citation_kind: str
+    citation_value: str
+    claim_surface: str
+
+
+class ClaimGatedPhrase(NamedTuple):
+    """Claim-like README language that should stay visible to reviewers."""
+    line_number: int
+    phrase: str
+    text: str
+    has_inline_citation: bool
 
 
 def strip_markdown_code(text: str) -> str:
@@ -52,32 +72,136 @@ def strip_markdown_code(text: str) -> str:
     return re.sub(r"`[^`\n]*`", "", without_fenced_blocks)
 
 
+def strip_markdown_code_preserve_lines(text: str) -> list[str]:
+    """Strip Markdown code while preserving line numbers for diagnostics."""
+    stripped_lines: list[str] = []
+    in_fenced_block = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fenced_block = not in_fenced_block
+            stripped_lines.append("")
+            continue
+        if in_fenced_block:
+            stripped_lines.append("")
+            continue
+        stripped_lines.append(re.sub(r"`[^`\n]*`", "", line))
+    return stripped_lines
+
+
 def is_placeholder_citation(artifact_path: str, correlation_id: str) -> bool:
     """Return true for documentation placeholders, not real evidence claims."""
     return artifact_path.startswith("[") or correlation_id.startswith("[")
 
 
+def classify_claim_surface(claim_text: str, artifact_path: str) -> str:
+    """Classify whether a claim is release-facing or explicitly historical."""
+    lowered = f"{claim_text} {artifact_path}".lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "historical",
+            "snapshot",
+            "baseline",
+            "planning/",
+            "docs/planning/",
+            "retained",
+            "not treated as current",
+        )
+    ):
+        return "historical_snapshot"
+    return "release_facing"
+
+
+def proof_artifact_family(artifact_path: str) -> str:
+    """Return the proof family used for claim obligation diagnostics."""
+    normalized = artifact_path.strip().replace("\\", "/")
+    for prefix in ("tests/perf/reports/", "docs/evidence/"):
+        if normalized.startswith(prefix):
+            return prefix.rstrip("/")
+    if normalized.startswith("docs/planning/"):
+        return "docs/planning"
+    return "other"
+
+
+def parse_citation_obligations(readme_text: str) -> list[ClaimObligation]:
+    """Parse README artifact citations with line numbers and claim surface."""
+    stripped_lines = strip_markdown_code_preserve_lines(readme_text)
+    original_lines = readme_text.splitlines()
+    citation_patterns = [
+        ("run", re.compile(r'\*\(from ([^,]+), run ([^)]+)\)\*')),
+        ("generated", re.compile(r'\*\(from ([^,]+), generated `?([^`)]+)`?\)\*')),
+    ]
+    obligations: list[ClaimObligation] = []
+    seen: set[tuple[int, str, str, str]] = set()
+    for line_number, stripped_line in enumerate(stripped_lines, start=1):
+        original_line = original_lines[line_number - 1] if line_number - 1 < len(original_lines) else ""
+        for citation_kind, citation_pattern in citation_patterns:
+            for match in citation_pattern.finditer(stripped_line):
+                artifact_path = match.group(1).strip()
+                citation_value = match.group(2).strip()
+                if is_placeholder_citation(artifact_path, citation_value):
+                    continue
+                key = (line_number, artifact_path, citation_kind, citation_value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                obligations.append(
+                    ClaimObligation(
+                        line_number=line_number,
+                        claim_text=original_line.strip(),
+                        artifact_path=artifact_path,
+                        citation_kind=citation_kind,
+                        citation_value=citation_value,
+                        claim_surface=classify_claim_surface(original_line, artifact_path),
+                    )
+                )
+    return obligations
+
+
 def parse_citations(readme_text: str) -> list[tuple[str, str]]:
     """Parse real README artifact citations, excluding examples and placeholders."""
-    # Pattern: *(from artifact-path, run correlation-id)*
-    stripped = strip_markdown_code(readme_text)
-    citations = []
-    citation_patterns = [
-        r'\*\(from ([^,]+), run ([^)]+)\)\*',
-        r'\*\(from ([^,]+), generated `?([^`)]+)`?\)\*',
+    return [
+        (obligation.artifact_path, obligation.citation_value)
+        for obligation in parse_citation_obligations(readme_text)
     ]
-    seen: set[tuple[str, str]] = set()
-    for citation_pattern in citation_patterns:
-        for artifact_path, correlation_id in re.findall(citation_pattern, stripped):
-            artifact_path = artifact_path.strip()
-            correlation_id = correlation_id.strip()
-            if is_placeholder_citation(artifact_path, correlation_id):
+
+
+CLAIM_GATED_PHRASES = (
+    "performance claims",
+    "speed claims",
+    "benchmark evidence",
+    "claim-integrity",
+    "release-facing performance",
+    "p99 latency",
+    "throughput",
+    "startup",
+    "memory",
+    "rss growth",
+    "mib",
+)
+
+
+def parse_claim_gated_phrases(readme_text: str) -> list[ClaimGatedPhrase]:
+    """Extract claim-gated performance language for proof-obligation reporting."""
+    stripped_lines = strip_markdown_code_preserve_lines(readme_text)
+    original_lines = readme_text.splitlines()
+    phrases: list[ClaimGatedPhrase] = []
+    for line_number, stripped_line in enumerate(stripped_lines, start=1):
+        lowered = stripped_line.lower()
+        for phrase in CLAIM_GATED_PHRASES:
+            if phrase not in lowered:
                 continue
-            citation = (artifact_path, correlation_id)
-            if citation not in seen:
-                seen.add(citation)
-                citations.append(citation)
-    return citations
+            original_line = original_lines[line_number - 1] if line_number - 1 < len(original_lines) else ""
+            phrases.append(
+                ClaimGatedPhrase(
+                    line_number=line_number,
+                    phrase=phrase,
+                    text=original_line.strip(),
+                    has_inline_citation="*(from " in original_line,
+                )
+            )
+            break
+    return phrases
 
 
 def as_utc(value: datetime) -> datetime:
@@ -135,6 +259,7 @@ def check_artifact_content(
     full_path: Path,
     now: datetime,
     staleness_threshold: timedelta,
+    claim_surface: str,
 ) -> tuple[str, ...]:
     """Validate that a cited artifact actually supports the README claim."""
     errors: list[str] = []
@@ -153,10 +278,20 @@ def check_artifact_content(
     if payload is None:
         return tuple(errors)
 
+    family = proof_artifact_family(artifact_path)
+    if claim_surface == "release_facing" and family not in {
+        "tests/perf/reports",
+        "docs/evidence",
+    }:
+        errors.append(
+            "release-facing proof obligation must cite tests/perf/reports or docs/evidence "
+            f"artifact, got {family}"
+        )
+
     generated_at = parse_iso_datetime(payload.get("generated_at"))
     if generated_at is None:
         errors.append("JSON artifact missing parseable generated_at timestamp")
-    elif now - generated_at > staleness_threshold:
+    elif claim_surface != "historical_snapshot" and now - generated_at > staleness_threshold:
         days_old = (now - generated_at).total_seconds() / 86400
         errors.append(f"artifact generated_at is stale: {days_old:.1f} days old")
 
@@ -189,13 +324,23 @@ def check_readme(repo_root: Path, now: datetime | None = None) -> int:
         print(f"ERROR: Failed to read README.md: {e}")
         return 2
 
-    citations = parse_citations(readme_text)
+    obligations = parse_citation_obligations(readme_text)
+    claim_gated_phrases = parse_claim_gated_phrases(readme_text)
 
-    if not citations:
+    if not obligations:
         print("INFO: No artifact citations found in README.md")
+        if claim_gated_phrases:
+            print(f"INFO: Found {len(claim_gated_phrases)} claim-gated phrase(s) without hard citations")
         return 0
 
-    print(f"INFO: Checking {len(citations)} artifact citations for freshness...")
+    print(f"INFO: Checking {len(obligations)} README proof obligation(s) for freshness...")
+    if claim_gated_phrases:
+        cited_phrase_count = sum(1 for phrase in claim_gated_phrases if phrase.has_inline_citation)
+        print(
+            "INFO: Extracted "
+            f"{len(claim_gated_phrases)} claim-gated phrase(s) "
+            f"({cited_phrase_count} with inline citations)"
+        )
 
     # Check each citation
     stale_count = 0
@@ -207,16 +352,26 @@ def check_readme(repo_root: Path, now: datetime | None = None) -> int:
     now = as_utc(now or datetime.now(timezone.utc))
     content_error_count = 0
 
-    for artifact_path, correlation_id in citations:
+    for obligation in obligations:
+        artifact_path = obligation.artifact_path
+        correlation_id = obligation.citation_value
         # Resolve artifact path relative to repo root
         full_path = repo_root / artifact_path
 
         if not full_path.exists():
-            print(f"WARNING: Cited artifact does not exist: {artifact_path}")
+            print(
+                f"WARNING: line {obligation.line_number}: cited artifact does not exist: {artifact_path}"
+            )
+            print(
+                "  Remediation: regenerate the artifact at the cited path or soften/remove "
+                f"the README claim on line {obligation.line_number}."
+            )
             missing_count += 1
             results.append(CitationCheck(
                 artifact_path=artifact_path,
                 correlation_id=correlation_id,
+                line_number=obligation.line_number,
+                claim_surface=obligation.claim_surface,
                 file_exists=False,
                 file_mtime=None,
                 days_old=None,
@@ -230,13 +385,25 @@ def check_readme(repo_root: Path, now: datetime | None = None) -> int:
             mtime = datetime.fromtimestamp(full_path.stat().st_mtime, timezone.utc)
             age = now - mtime
             days_old = age.total_seconds() / 86400  # Convert to days
-            is_stale = age > staleness_threshold
+            is_stale = obligation.claim_surface != "historical_snapshot" and age > staleness_threshold
 
             if is_stale:
-                print(f"STALE: {artifact_path} (age: {days_old:.1f} days, limit: 14 days)")
+                print(
+                    f"STALE: line {obligation.line_number}: {artifact_path} "
+                    f"(age: {days_old:.1f} days, limit: 14 days)"
+                )
+                print(
+                    "  Remediation: regenerate fresh evidence and update the README citation "
+                    f"run/provenance on line {obligation.line_number}."
+                )
                 stale_count += 1
             else:
-                print(f"FRESH: {artifact_path} (age: {days_old:.1f} days)")
+                freshness_label = "HISTORICAL" if obligation.claim_surface == "historical_snapshot" else "FRESH"
+                print(
+                    f"{freshness_label}: line {obligation.line_number}: {artifact_path} "
+                    f"(age: {days_old:.1f} days, surface={obligation.claim_surface}, "
+                    f"proof={proof_artifact_family(artifact_path)})"
+                )
 
             content_errors = check_artifact_content(
                 artifact_path,
@@ -244,15 +411,22 @@ def check_readme(repo_root: Path, now: datetime | None = None) -> int:
                 full_path,
                 now,
                 staleness_threshold,
+                obligation.claim_surface,
             )
             if content_errors:
                 content_error_count += len(content_errors)
                 for error in content_errors:
-                    print(f"INVALID: {artifact_path}: {error}")
+                    print(f"INVALID: line {obligation.line_number}: {artifact_path}: {error}")
+                    print(
+                        "  Remediation: cite an artifact whose schema/run provenance matches "
+                        f"the README claim on line {obligation.line_number}, or remove the claim."
+                    )
 
             results.append(CitationCheck(
                 artifact_path=artifact_path,
                 correlation_id=correlation_id,
+                line_number=obligation.line_number,
+                claim_surface=obligation.claim_surface,
                 file_exists=True,
                 file_mtime=mtime,
                 days_old=days_old,
@@ -266,7 +440,8 @@ def check_readme(repo_root: Path, now: datetime | None = None) -> int:
 
     # Summary
     print(f"\nSUMMARY:")
-    print(f"  Total citations: {len(citations)}")
+    print(f"  Total proof obligations: {len(obligations)}")
+    print(f"  Claim-gated phrases extracted: {len(claim_gated_phrases)}")
     print(f"  Fresh artifacts: {len([r for r in results if r.file_exists and not r.is_stale])}")
     print(f"  Stale artifacts: {stale_count}")
     print(f"  Missing artifacts: {missing_count}")
@@ -337,6 +512,18 @@ def run_self_test() -> int:
         if "[artifact-path]" in first_text or "missing-in-code-block" in first_text:
             print(first_text)
             print("SELF-TEST FAIL: examples/placeholders must not be parsed as claims")
+            return 2
+        obligations = parse_citation_obligations(readme.read_text(encoding="utf-8"))
+        if len(obligations) != 1 or obligations[0].line_number != 5:
+            print(obligations)
+            print("SELF-TEST FAIL: citation obligations must retain README line numbers")
+            return 2
+        phrases = parse_claim_gated_phrases(
+            "p99 latency `example code` should stay visible when it is claim language\n"
+        )
+        if len(phrases) != 1 or phrases[0].phrase != "p99 latency":
+            print(phrases)
+            print("SELF-TEST FAIL: claim-gated performance phrases should be extracted")
             return 2
 
         readme.write_text(
@@ -430,6 +617,34 @@ def run_self_test() -> int:
         if fifth_result != 1 or "artifact generated_at is stale" not in fifth_text:
             print(fifth_text)
             print("SELF-TEST FAIL: stale generated_at should fail even with fresh mtime")
+            return 2
+
+        historical_snapshot = repo_root / "docs/planning/historical_snapshot.json"
+        historical_snapshot.parent.mkdir(parents=True, exist_ok=True)
+        historical_snapshot.write_text(
+            json.dumps(
+                {
+                    "generated_at": (now - timedelta(days=45)).isoformat(),
+                    "correlation_id": "historical-run",
+                    "ok": True,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        old_ts = (now - timedelta(days=45)).timestamp()
+        os.utime(historical_snapshot, (old_ts, old_ts))
+        readme.write_text(
+            "Historical benchmark snapshot: *(from docs/planning/historical_snapshot.json, run historical-run)*\n",
+            encoding="utf-8",
+        )
+        historical_output = io.StringIO()
+        with contextlib.redirect_stdout(historical_output):
+            historical_result = check_readme(repo_root, now=now)
+        historical_text = historical_output.getvalue()
+        if historical_result != 0 or "surface=historical_snapshot" not in historical_text:
+            print(historical_text)
+            print("SELF-TEST FAIL: historical snapshots should be mapped but not freshness-blocking")
             return 2
 
     print("SELF-TEST PASS")
