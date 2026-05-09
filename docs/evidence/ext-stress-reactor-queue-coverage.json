@@ -15,7 +15,9 @@
       "config.synthetic_hostcall_root",
       "config.require_reactor_activity",
       "reactor_activity",
-      "pass.reactor_activity_ok"
+      "pass.reactor_activity_ok",
+      "reactor.s3fifo",
+      "reactor.bravo"
     ],
     "failure_modes": [
       "reactor_disabled",
@@ -101,7 +103,20 @@
       "numa_pool_active": false,
       "affinity_advisory_count": 0,
       "migration_events_total": 0,
-      "stall_reasons": {}
+      "stall_reasons": {},
+      "s3fifo": {
+        "mode": "Active",
+        "fallback_reason": null,
+        "fairness_budget_rejections": 0,
+        "lane_overflow_rejections": 0,
+        "fallback_event_total": 0
+      },
+      "bravo": {
+        "mode": "Balanced",
+        "transitions": 0,
+        "rollbacks": 0,
+        "writer_recovery_remaining": 0
+      }
     },
     "latency_us": {
       "count": 4,

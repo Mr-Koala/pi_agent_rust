@@ -86,11 +86,44 @@ struct ReactorQueueSample {
     total_dispatched: u64,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize)]
 struct S3FifoStressDiagnostics {
+    mode: &'static str,
+    fallback_reason: Option<&'static str>,
     fairness_budget_rejections: u64,
     lane_overflow_rejections: u64,
     fallback_event_total: u64,
+}
+
+impl Default for S3FifoStressDiagnostics {
+    fn default() -> Self {
+        Self {
+            mode: "Active",
+            fallback_reason: None,
+            fairness_budget_rejections: 0,
+            lane_overflow_rejections: 0,
+            fallback_event_total: 0,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct BravoStressDiagnostics {
+    mode: &'static str,
+    transitions: u64,
+    rollbacks: u64,
+    writer_recovery_remaining: u32,
+}
+
+impl Default for BravoStressDiagnostics {
+    fn default() -> Self {
+        Self {
+            mode: "Balanced",
+            transitions: 0,
+            rollbacks: 0,
+            writer_recovery_remaining: 0,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -107,6 +140,7 @@ struct ReactorDiagnostics {
     migration_event_total: u64,
     migration_events_by_transition: BTreeMap<String, u64>,
     s3fifo: S3FifoStressDiagnostics,
+    bravo: BravoStressDiagnostics,
 }
 
 #[derive(Debug)]
@@ -357,7 +391,14 @@ fn build_reactor_diagnostics(
             .filter(|(reason, _)| reason.contains("fallback"))
             .map(|(_, count)| *count)
             .sum::<u64>();
+        let (mode, fallback_reason) = if fallback_event_total > 0 {
+            ("ConservativeFifo", Some("derived_from_stall_reasons"))
+        } else {
+            ("Active", None)
+        };
         S3FifoStressDiagnostics {
+            mode,
+            fallback_reason,
             fairness_budget_rejections,
             lane_overflow_rejections,
             fallback_event_total,
@@ -384,6 +425,7 @@ fn build_reactor_diagnostics(
     }
 
     let s3fifo = s3fifo_from_reasons(&stall_reasons, reactor.rejected_enqueues);
+    let bravo = BravoStressDiagnostics::default();
 
     ReactorDiagnostics {
         enabled: true,
@@ -398,6 +440,7 @@ fn build_reactor_diagnostics(
         migration_event_total,
         migration_events_by_transition,
         s3fifo,
+        bravo,
     }
 }
 
@@ -683,9 +726,17 @@ fn write_stress_report(result: &StressResult, duration_secs: u64, ext_names: &[S
             "migration_event_total": result.reactor.migration_event_total,
             "migration_events": result.reactor.migration_events_by_transition,
             "s3fifo": {
+                "mode": result.reactor.s3fifo.mode,
+                "fallback_reason": result.reactor.s3fifo.fallback_reason,
                 "fairness_budget_rejections": result.reactor.s3fifo.fairness_budget_rejections,
                 "lane_overflow_rejections": result.reactor.s3fifo.lane_overflow_rejections,
                 "fallback_event_total": result.reactor.s3fifo.fallback_event_total,
+            },
+            "bravo": {
+                "mode": result.reactor.bravo.mode,
+                "transitions": result.reactor.bravo.transitions,
+                "rollbacks": result.reactor.bravo.rollbacks,
+                "writer_recovery_remaining": result.reactor.bravo.writer_recovery_remaining,
             },
         },
     });
@@ -740,9 +791,17 @@ fn write_stress_report(result: &StressResult, duration_secs: u64, ext_names: &[S
                 "migration_events": result.reactor.migration_events_by_transition,
                 "queue_samples": result.reactor.queue_samples,
                 "s3fifo": {
+                    "mode": result.reactor.s3fifo.mode,
+                    "fallback_reason": result.reactor.s3fifo.fallback_reason,
                     "fairness_budget_rejections": result.reactor.s3fifo.fairness_budget_rejections,
                     "lane_overflow_rejections": result.reactor.s3fifo.lane_overflow_rejections,
                     "fallback_event_total": result.reactor.s3fifo.fallback_event_total,
+                },
+                "bravo": {
+                    "mode": result.reactor.bravo.mode,
+                    "transitions": result.reactor.bravo.transitions,
+                    "rollbacks": result.reactor.bravo.rollbacks,
+                    "writer_recovery_remaining": result.reactor.bravo.writer_recovery_remaining,
                 },
             },
         },
@@ -1069,6 +1128,18 @@ fn stress_short_10_extensions() {
         triage_json["results"]["reactor"]["s3fifo"]["fallback_event_total"].is_number(),
         "reactor.s3fifo.fallback_event_total should be present in stress triage report"
     );
+    assert!(
+        triage_json["results"]["reactor"]["bravo"]["mode"].is_string(),
+        "reactor.bravo.mode should be present in stress triage report"
+    );
+    assert!(
+        triage_json["results"]["reactor"]["bravo"]["transitions"].is_number(),
+        "reactor.bravo.transitions should be present in stress triage report"
+    );
+    assert!(
+        triage_json["results"]["reactor"]["bravo"]["rollbacks"].is_number(),
+        "reactor.bravo.rollbacks should be present in stress triage report"
+    );
 
     // Verify events were dispatched
     assert!(
@@ -1268,7 +1339,6 @@ fn stress_verify_no_panic_rapid_dispatch() {
     let (manager, _loaded) = load_extensions(&ext_paths);
 
     // Fire 500 events as fast as possible
-    let start = Instant::now();
     let mut count = 0u64;
     let mut errors = 0u64;
     for _ in 0..500 {
@@ -1288,14 +1358,8 @@ fn stress_verify_no_panic_rapid_dispatch() {
         }
         count += 1;
     }
-    let elapsed = start.elapsed();
 
-    eprintln!(
-        "  Rapid dispatch: {} events in {:.1}ms ({} errors)",
-        count,
-        elapsed.as_secs_f64() * 1000.0,
-        errors
-    );
+    eprintln!("  Rapid dispatch: {count} events ({errors} errors)");
 
     // The test passes if we reach here without panicking
     assert!(count >= 500, "should have dispatched all events");

@@ -921,6 +921,39 @@ fn push_reactor_queue_sample(
     }));
 }
 
+fn build_s3fifo_report(
+    stall_reasons: &BTreeMap<String, u64>,
+    lane_overflow_rejections: u64,
+) -> Value {
+    let fairness_budget_rejections = stall_reasons.get("fairness_budget").copied().unwrap_or(0);
+    let fallback_event_total = stall_reasons
+        .iter()
+        .filter(|(reason, _)| reason.contains("fallback"))
+        .map(|(_, count)| *count)
+        .sum::<u64>();
+    let (mode, fallback_reason) = if fallback_event_total > 0 {
+        ("ConservativeFifo", Some("derived_from_stall_reasons"))
+    } else {
+        ("Active", None)
+    };
+    serde_json::json!({
+        "mode": mode,
+        "fallback_reason": fallback_reason,
+        "fairness_budget_rejections": fairness_budget_rejections,
+        "lane_overflow_rejections": lane_overflow_rejections,
+        "fallback_event_total": fallback_event_total,
+    })
+}
+
+fn build_bravo_report() -> Value {
+    serde_json::json!({
+        "mode": "Balanced",
+        "transitions": 0,
+        "rollbacks": 0,
+        "writer_recovery_remaining": 0,
+    })
+}
+
 fn build_reactor_report(
     manager: &ExtensionManager,
     queue_samples: &[Value],
@@ -964,6 +997,8 @@ fn build_reactor_report(
     let migration_total = migration_events.values().copied().sum::<u64>();
 
     let Some(reactor) = manager.reactor_telemetry() else {
+        let s3fifo = build_s3fifo_report(&stall_reasons, 0);
+        let bravo = build_bravo_report();
         return serde_json::json!({
             "enabled": false,
             "queue_samples": queue_samples,
@@ -972,6 +1007,8 @@ fn build_reactor_report(
                 "total": migration_total,
                 "by_transition": migration_events,
             },
+            "s3fifo": s3fifo,
+            "bravo": bravo,
         });
     };
 
@@ -982,6 +1019,8 @@ fn build_reactor_report(
         *count = count.saturating_add(reactor.rejected_enqueues);
     }
 
+    let s3fifo = build_s3fifo_report(&stall_reasons, reactor.rejected_enqueues);
+    let bravo = build_bravo_report();
     serde_json::json!({
         "enabled": true,
         "shard_count": reactor.shard_count,
@@ -998,6 +1037,8 @@ fn build_reactor_report(
             "total": migration_total,
             "by_transition": migration_events,
         },
+        "s3fifo": s3fifo,
+        "bravo": bravo,
     })
 }
 
@@ -1508,6 +1549,26 @@ mod tests {
             .as_f64()
             .expect("gain pct");
         assert!(gain > 0.0, "throughput gain should be positive");
+    }
+
+    #[test]
+    fn reactor_report_includes_stable_hostcall_queue_fields() {
+        let manager = ExtensionManager::new();
+        let report = build_reactor_report(&manager, &[], 0);
+
+        assert_eq!(report["s3fifo"]["mode"].as_str(), Some("Active"));
+        assert_eq!(
+            report["s3fifo"]["fairness_budget_rejections"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            report["s3fifo"]["lane_overflow_rejections"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(report["s3fifo"]["fallback_event_total"].as_u64(), Some(0));
+        assert_eq!(report["bravo"]["mode"].as_str(), Some("Balanced"));
+        assert_eq!(report["bravo"]["transitions"].as_u64(), Some(0));
+        assert_eq!(report["bravo"]["rollbacks"].as_u64(), Some(0));
     }
 
     #[test]

@@ -200,9 +200,17 @@
       ],
       "rejected_enqueues": 0,
       "s3fifo": {
+        "mode": "Active",
+        "fallback_reason": null,
         "fairness_budget_rejections": 0,
         "fallback_event_total": 0,
         "lane_overflow_rejections": 0
+      },
+      "bravo": {
+        "mode": "Balanced",
+        "transitions": 0,
+        "rollbacks": 0,
+        "writer_recovery_remaining": 0
       },
       "shard_count": 4,
       "stall_reasons": {},
