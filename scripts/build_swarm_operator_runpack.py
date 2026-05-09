@@ -24,6 +24,8 @@ from typing import Any
 
 
 RUNPACK_SCHEMA = "pi.swarm.operator_runpack.v1"
+RUNPACK_CONTRACT_SCHEMA = "pi.swarm.operator_runpack_contract.v1"
+RUNPACK_CONTRACT_PATH = Path("docs/contracts/swarm-operator-runpack-contract.json")
 GOLDEN_REPORT_DIRECTORY = Path("tests/golden_corpus/swarm_operator_runpack")
 COMPLETE_RUNPACK_GOLDEN = "complete_runpack_projection.json"
 UPDATE_GOLDEN_ENV = "UPDATE_SWARM_OPERATOR_RUNPACK_GOLDEN"
@@ -606,6 +608,51 @@ def write_json(path: Path, payload: Any) -> Path:
     return path
 
 
+def get_dotted(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            raise KeyError(path)
+        current = current[part]
+    return current
+
+
+def assert_runpack_contract(runpack: dict[str, Any]) -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    contract_path = repo_root / RUNPACK_CONTRACT_PATH
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise AssertionError(f"missing runpack contract: {contract_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"runpack contract is malformed JSON: {contract_path}: {exc}") from exc
+    assert contract.get("schema") == RUNPACK_CONTRACT_SCHEMA
+    assert contract.get("runpack_schema") == RUNPACK_SCHEMA
+    assert runpack.get("schema") == contract["runpack_schema"]
+    assert runpack.get("purpose") == contract.get("purpose")
+    assert runpack.get("status") in set(contract.get("allowed_statuses", []))
+    for key in contract.get("required_top_level_keys", []):
+        assert key in runpack, f"missing top-level runpack key: {key}"
+    source_ids = {
+        item.get("id")
+        for item in runpack.get("source_statuses", [])
+        if isinstance(item, dict)
+    }
+    assert source_ids == set(contract.get("required_source_ids", []))
+    for path in contract.get("required_summary_paths", []):
+        get_dotted(runpack, path)
+    redaction = runpack.get("redaction_summary")
+    assert isinstance(redaction, dict)
+    assert redaction.get("redacted_count", 0) >= contract.get("minimum_redacted_count", 0)
+    fields = set(redaction.get("fields", []))
+    assert fields.issuperset(set(contract.get("required_redacted_fields", [])))
+    actions = runpack.get("operator_next_actions")
+    assert isinstance(actions, list) and actions
+    action_text = "\n".join(str(action) for action in actions)
+    for fragment in contract.get("required_next_action_fragments", []):
+        assert fragment in action_text, f"missing next-action fragment: {fragment}"
+
+
 def canonicalize_for_golden(value: Any, workspace: Path) -> Any:
     workspace_text = str(workspace)
     if isinstance(value, dict):
@@ -776,6 +823,7 @@ def run_self_test() -> int:
         assert runpack["git_state"]["dirty"] is True
         assert runpack["redaction_summary"]["redacted_count"] >= 1
         assert args.out_json.exists() and args.out_md.exists()
+        assert_runpack_contract(runpack)
         assert_runpack_golden(runpack, workspace)
         malformed = workspace / "malformed.json"
         malformed.write_text("{not valid json", encoding="utf-8")

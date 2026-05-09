@@ -1,0 +1,103 @@
+{
+  "schema": "pi.swarm.operator_runpack_contract.v1",
+  "runpack_schema": "pi.swarm.operator_runpack.v1",
+  "purpose": "operator_handoff_not_release_performance_claim",
+  "minimum_redacted_count": 1,
+  "required_top_level_keys": [
+    "schema",
+    "generated_at",
+    "status",
+    "purpose",
+    "source_statuses",
+    "doctor_swarm",
+    "beads",
+    "agent_mail",
+    "rch_admission",
+    "evidence_readiness",
+    "git_state",
+    "activity_digest",
+    "smoke_harness",
+    "redaction_summary",
+    "operator_next_actions"
+  ],
+  "required_source_ids": [
+    "doctor_swarm",
+    "claim_readiness",
+    "smoke_harness",
+    "activity_digest",
+    "cargo_admission",
+    "beads",
+    "git_status"
+  ],
+  "required_summary_paths": [
+    "doctor_swarm.agent_mail_build_slots",
+    "beads.stale",
+    "agent_mail.build_slots",
+    "rch_admission.decision",
+    "evidence_readiness.overall_status",
+    "git_state.dirty",
+    "activity_digest.evidence_pointers",
+    "smoke_harness.scenario_statuses",
+    "redaction_summary.redacted_count",
+    "operator_next_actions"
+  ],
+  "required_redacted_fields": [
+    "doctor_swarm.findings[0].detail"
+  ],
+  "required_next_action_fragments": [
+    "Review stale in-progress Beads",
+    "Treat cargo/RCH admission",
+    "Use activity-digest saturation evidence",
+    "Account for dirty files"
+  ],
+  "allowed_statuses": [
+    "ready",
+    "degraded"
+  ],
+  "must_requirements": [
+    {
+      "id": "RUNPACK-MUST-001",
+      "description": "Runpack output declares the operator runpack schema and the non-release-claim purpose.",
+      "validated_by": [
+        "schema",
+        "purpose"
+      ]
+    },
+    {
+      "id": "RUNPACK-MUST-002",
+      "description": "Runpack output carries every required top-level operator summary section.",
+      "validated_by": [
+        "required_top_level_keys"
+      ]
+    },
+    {
+      "id": "RUNPACK-MUST-003",
+      "description": "Runpack source status coverage names every upstream evidence source the wrapper may aggregate.",
+      "validated_by": [
+        "required_source_ids"
+      ]
+    },
+    {
+      "id": "RUNPACK-MUST-004",
+      "description": "Runpack summaries preserve actionable paths for doctor, Beads, Agent Mail, RCH admission, evidence readiness, git state, activity digest, smoke harness, redaction, and next actions.",
+      "validated_by": [
+        "required_summary_paths"
+      ]
+    },
+    {
+      "id": "RUNPACK-MUST-005",
+      "description": "Runpack redaction evidence proves sensitive fixture content was removed before the handoff bundle is emitted.",
+      "validated_by": [
+        "minimum_redacted_count",
+        "required_redacted_fields"
+      ]
+    },
+    {
+      "id": "RUNPACK-MUST-006",
+      "description": "Runpack next actions include operator-facing remediation text for stale beads, cargo/RCH admission, activity saturation, and dirty git state.",
+      "validated_by": [
+        "required_next_action_fragments"
+      ]
+    }
+  ]
+}
