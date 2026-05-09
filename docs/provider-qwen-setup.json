@@ -73,8 +73,8 @@
     {
       "id": "qwen-cav-005",
       "severity": "info",
-      "summary": "logprobs returns null, system_fingerprint returns empty string",
-      "detail": "These OpenAI-compatible fields are technically present but return null/empty. Do not rely on them.",
+      "summary": "logprobs returns null, system_fingerprint returns null",
+      "detail": "These OpenAI-compatible fields are technically present but return null in current Qwen examples. Do not rely on them.",
       "test_evidence": "docs/provider-qwen-capability-profile.json spec-003"
     },
     {

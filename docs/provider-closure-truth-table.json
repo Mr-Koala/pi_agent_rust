@@ -624,7 +624,7 @@
         "n parameter: only qwen-plus supports n>1; must be 1 when tools specified",
         "429 errors have two sub-types: qps (retryable) vs quota (non-retryable billing)",
         "stream_options.include_usage=true required for token counts",
-        "system_fingerprint returns empty string",
+        "system_fingerprint returns null",
         "alibaba-us entry added; VCR fixtures pending (0/7 coverage)"
       ],
       "related_beads": {

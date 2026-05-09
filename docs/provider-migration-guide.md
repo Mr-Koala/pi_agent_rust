@@ -145,7 +145,7 @@ Before switching providers, verify:
 **Migrating TO Qwen (alibaba)**:
 - Tool calling CANNOT be combined with streaming on older models
 - Two distinct 429 error types: `qps` (retryable) vs `quota` (non-retryable)
-- `system_fingerprint` always returns empty string
+- `system_fingerprint` returns null in current OpenAI-compatible examples; do not rely on it
 - `logprobs` always returns null
 
 ## Related Docs

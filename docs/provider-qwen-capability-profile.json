@@ -4,7 +4,7 @@
   "bead_id": "bd-3uqg.11.9.1",
   "provider_id": "qwen",
   "canonical_provider_id": "alibaba",
-  "verified_at_utc": "2026-02-13T09:15:00Z",
+  "verified_at_utc": "2026-05-09T07:04:32Z",
   "source_snapshot": [
     {
       "label": "Alibaba Cloud Model Studio — OpenAI Compatibility",
@@ -13,7 +13,7 @@
         "Three regional base URLs: Singapore (intl), Virginia (us), Beijing (cn)",
         "OpenAI-compatible /chat/completions endpoint",
         "CRITICAL: tool calling CANNOT be combined with streaming",
-        "system_fingerprint returns empty string, logprobs returns null",
+        "system_fingerprint returns null, logprobs returns null",
         "n parameter only works with qwen-plus, must be 1 with tools"
       ]
     },
@@ -114,7 +114,7 @@
     ],
     "unsupported_chat_fields": [
       "logprobs (returns null)",
-      "system_fingerprint (returns empty string)"
+      "system_fingerprint (returns null)"
     ],
     "n_parameter": {
       "min": 1,
@@ -151,7 +151,7 @@
       "Map delta chunks into StreamEvent::TextDelta consistently",
       "CRITICAL: When tools are defined, Pi MUST use non-streaming mode (stream=false)",
       "Use stream_options.include_usage=true to get token counts in streaming final chunk",
-      "system_fingerprint will be empty string — do not rely on it"
+      "system_fingerprint may be null — do not rely on it"
     ]
   },
   "tool_calling_contract": {
@@ -186,7 +186,7 @@
       "total_tokens"
     ],
     "streaming_usage": "Only available when stream_options.include_usage=true is set",
-    "system_fingerprint": "Returns empty string (not implemented)"
+    "system_fingerprint": "Provider returns null in current OpenAI-compatible examples; do not rely on it"
   },
   "error_and_rate_limit_profile": {
     "http_errors_documented": [
