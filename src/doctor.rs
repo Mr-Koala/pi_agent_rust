@@ -34,7 +34,9 @@ const SWARM_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const SWARM_DOCTOR_ADMISSION_SCHEMA: &str = "pi.doctor.swarm_admission.v1";
 const SWARM_DOCTOR_RCH_FAILURE_SCHEMA: &str = "pi.doctor.rch_failure.v1";
 const SWARM_DOCTOR_TEMP_DIR_SCHEMA: &str = "pi.doctor.swarm_temp_dir.v1";
+const SWARM_DOCTOR_BUILD_SLOT_SCHEMA: &str = "pi.doctor.agent_mail_build_slots.v1";
 const SWARM_CARGO_SCRATCH_ROOT: &str = "/data/tmp/pi_agent_rust_cargo";
+const SWARM_BUILD_SLOT_SOON_EXPIRING_MINUTES: i64 = 30;
 const MIB_BYTES: u64 = 1024 * 1024;
 
 // ── Core Types ──────────────────────────────────────────────────────
@@ -1758,6 +1760,8 @@ fn check_swarm_agent_mail(cwd: &Path, findings: &mut Vec<Finding>) {
         "Run `am robot reservations --all --format json` and resolve conflicts or renew expiring leases",
         findings,
     );
+
+    check_swarm_agent_mail_build_slots(cwd, agent_name.as_deref(), findings);
 }
 
 fn probe_agent_mail_json<F>(
@@ -1862,6 +1866,404 @@ fn classify_agent_mail_reservations(value: &serde_json::Value) -> Finding {
         Finding::pass(CheckCategory::Swarm, "Agent Mail reservations reachable")
             .with_detail(format!("active={active}, expiring_soon={expiring}"))
     }
+}
+
+fn check_swarm_agent_mail_build_slots(
+    cwd: &Path,
+    agent_name: Option<&str>,
+    findings: &mut Vec<Finding>,
+) {
+    let Some(agent) = agent_name else {
+        findings.push(agent_mail_build_slots_unavailable_finding(
+            "AGENT_MAIL_AGENT and AGENT_NAME are both unset",
+        ));
+        return;
+    };
+
+    let project = cwd.display().to_string();
+    let args = ["amctl", "env", "-p", project.as_str(), "-a", agent];
+    match run_tool_with_timeout(SwarmProbeCommand::Am, &args, Some(cwd), SWARM_PROBE_TIMEOUT) {
+        Ok(outcome) if outcome.timed_out => {
+            findings.push(agent_mail_build_slots_unavailable_finding(
+                "am amctl env timed out before reporting archive paths",
+            ));
+        }
+        Ok(outcome) if !outcome.success => {
+            findings.push(
+                agent_mail_build_slots_unavailable_finding(
+                    "am amctl env did not report archive paths",
+                )
+                .with_detail(command_failure_detail(&outcome)),
+            );
+        }
+        Ok(outcome) => {
+            if let Some(project_archive) = parse_agent_mail_project_archive(&outcome.stdout) {
+                let archive = read_agent_mail_build_slot_archive(&project_archive);
+                findings.push(classify_agent_mail_build_slots(
+                    &archive.values,
+                    archive.read_errors,
+                    Utc::now(),
+                ));
+            } else {
+                findings.push(
+                    agent_mail_build_slots_unavailable_finding(
+                        "am amctl env output did not include ARTIFACT_DIR",
+                    )
+                    .with_detail(redacted_output_snippet(&outcome)),
+                );
+            }
+        }
+        Err(err) => {
+            findings.push(
+                agent_mail_build_slots_unavailable_finding("am amctl env failed to start")
+                    .with_detail(err.to_string()),
+            );
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AgentMailBuildSlotArchive {
+    values: Vec<serde_json::Value>,
+    read_errors: usize,
+}
+
+fn read_agent_mail_build_slot_archive(project_archive: &Path) -> AgentMailBuildSlotArchive {
+    let build_slots_dir = project_archive.join("build_slots");
+    if !build_slots_dir.exists() {
+        return AgentMailBuildSlotArchive::default();
+    }
+
+    let mut archive = AgentMailBuildSlotArchive::default();
+    let Ok(slot_dirs) = std::fs::read_dir(&build_slots_dir) else {
+        archive.read_errors += 1;
+        return archive;
+    };
+
+    for slot_dir in slot_dirs {
+        let Ok(slot_dir) = slot_dir else {
+            archive.read_errors += 1;
+            continue;
+        };
+        let Ok(file_type) = slot_dir.file_type() else {
+            archive.read_errors += 1;
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        read_agent_mail_build_slot_dir(&slot_dir.path(), &mut archive);
+    }
+
+    archive
+}
+
+fn read_agent_mail_build_slot_dir(path: &Path, archive: &mut AgentMailBuildSlotArchive) {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        archive.read_errors += 1;
+        return;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            archive.read_errors += 1;
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        {
+            Some(value) => archive.values.push(value),
+            None => archive.read_errors += 1,
+        }
+    }
+}
+
+fn parse_agent_mail_project_archive(env_output: &str) -> Option<PathBuf> {
+    env_output.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once('=')?;
+        if key != "ARTIFACT_DIR" {
+            return None;
+        }
+        let artifact_dir = PathBuf::from(trim_matching_shell_quotes(value.trim()));
+        artifact_dir
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+    })
+}
+
+fn trim_matching_shell_quotes(value: &str) -> &str {
+    value
+        .strip_prefix('\'')
+        .and_then(|stripped| stripped.strip_suffix('\''))
+        .or_else(|| {
+            value
+                .strip_prefix('"')
+                .and_then(|stripped| stripped.strip_suffix('"'))
+        })
+        .unwrap_or(value)
+}
+
+#[derive(Debug, Default)]
+struct AgentMailBuildSlotCounts {
+    total: usize,
+    active: usize,
+    active_shared: usize,
+    active_exclusive: usize,
+    soon_expiring: usize,
+    stale: usize,
+    released: usize,
+    malformed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AgentMailBuildSlotSummary {
+    slot: String,
+    agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
+    exclusive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acquired_ts: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_ts: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    released_ts: Option<String>,
+    classification: String,
+}
+
+fn classify_agent_mail_build_slots(
+    values: &[serde_json::Value],
+    read_errors: usize,
+    now: DateTime<Utc>,
+) -> Finding {
+    let mut counts = AgentMailBuildSlotCounts {
+        malformed: read_errors,
+        ..AgentMailBuildSlotCounts::default()
+    };
+    let mut summaries = values
+        .iter()
+        .map(|value| summarize_agent_mail_build_slot(value, now, &mut counts))
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        build_slot_classification_rank(&left.classification)
+            .cmp(&build_slot_classification_rank(&right.classification))
+            .then_with(|| left.slot.cmp(&right.slot))
+            .then_with(|| left.agent.cmp(&right.agent))
+            .then_with(|| left.branch.cmp(&right.branch))
+    });
+
+    let visible_slots = summaries
+        .iter()
+        .take(SWARM_DETAIL_LIMIT)
+        .collect::<Vec<_>>();
+    let truncated_slot_count = summaries.len().saturating_sub(visible_slots.len());
+    let data = serde_json::json!({
+        "schema": SWARM_DOCTOR_BUILD_SLOT_SCHEMA,
+        "source": "agent_mail_archive_build_slots",
+        "source_supported": true,
+        "soon_expiring_minutes": SWARM_BUILD_SLOT_SOON_EXPIRING_MINUTES,
+        "total_count": counts.total,
+        "active_count": counts.active,
+        "active_shared_count": counts.active_shared,
+        "active_exclusive_count": counts.active_exclusive,
+        "soon_expiring_count": counts.soon_expiring,
+        "stale_count": counts.stale,
+        "released_count": counts.released,
+        "malformed_count": counts.malformed,
+        "read_error_count": read_errors,
+        "truncated_slot_count": truncated_slot_count,
+        "slots": visible_slots
+    });
+    agent_mail_build_slot_finding(&counts, data)
+}
+
+fn summarize_agent_mail_build_slot(
+    value: &serde_json::Value,
+    now: DateTime<Utc>,
+    counts: &mut AgentMailBuildSlotCounts,
+) -> AgentMailBuildSlotSummary {
+    counts.total += 1;
+
+    let slot = json_string_field(value, "slot");
+    let agent = json_string_field(value, "agent");
+    let branch = json_string_field(value, "branch");
+    let acquired_ts = json_string_field(value, "acquired_ts");
+    let expires_ts = json_string_field(value, "expires_ts");
+    let released_ts = json_string_field(value, "released_ts");
+    let exclusive = value
+        .get("exclusive")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    let classification = build_slot_classification(
+        slot.as_deref(),
+        agent.as_deref(),
+        expires_ts.as_deref(),
+        released_ts.as_deref(),
+        now,
+    );
+    count_build_slot_classification(&classification, exclusive, counts);
+
+    AgentMailBuildSlotSummary {
+        slot: slot.unwrap_or_else(|| "unknown".to_string()),
+        agent: agent.unwrap_or_else(|| "unknown".to_string()),
+        branch,
+        exclusive,
+        acquired_ts,
+        expires_ts,
+        released_ts,
+        classification,
+    }
+}
+
+fn build_slot_classification(
+    slot: Option<&str>,
+    agent: Option<&str>,
+    expires_ts: Option<&str>,
+    released_ts: Option<&str>,
+    now: DateTime<Utc>,
+) -> String {
+    if released_ts.is_some() {
+        return "released".to_string();
+    }
+
+    let Some(expires_at) = expires_ts.and_then(parse_rfc3339_utc) else {
+        return "malformed".to_string();
+    };
+    if slot.is_none() || agent.is_none() {
+        return "malformed".to_string();
+    }
+    if expires_at <= now {
+        return "stale_expired".to_string();
+    }
+    let seconds_until_expiry = (expires_at - now).num_seconds();
+    if seconds_until_expiry <= SWARM_BUILD_SLOT_SOON_EXPIRING_MINUTES * 60 {
+        return "soon_expiring".to_string();
+    }
+    "active".to_string()
+}
+
+fn count_build_slot_classification(
+    classification: &str,
+    exclusive: bool,
+    counts: &mut AgentMailBuildSlotCounts,
+) {
+    match classification {
+        "active" | "soon_expiring" => {
+            counts.active += 1;
+            if exclusive {
+                counts.active_exclusive += 1;
+            } else {
+                counts.active_shared += 1;
+            }
+            if classification == "soon_expiring" {
+                counts.soon_expiring += 1;
+            }
+        }
+        "stale_expired" => counts.stale += 1,
+        "released" => counts.released += 1,
+        _ => counts.malformed += 1,
+    }
+}
+
+fn agent_mail_build_slot_finding(
+    counts: &AgentMailBuildSlotCounts,
+    data: serde_json::Value,
+) -> Finding {
+    let detail = format!(
+        "active={}, shared={}, exclusive={}, soon_expiring={}, stale={}, malformed={}",
+        counts.active,
+        counts.active_shared,
+        counts.active_exclusive,
+        counts.soon_expiring,
+        counts.stale,
+        counts.malformed
+    );
+
+    if counts.malformed > 0 {
+        return Finding::warn(
+            CheckCategory::Swarm,
+            "Agent Mail build-slot records malformed",
+        )
+        .with_detail(detail)
+        .with_remediation(
+            "Inspect Agent Mail build_slots archive records before relying on slot posture",
+        )
+        .with_data(data);
+    }
+    if counts.active_exclusive > 0 {
+        return Finding::warn(CheckCategory::Swarm, "Agent Mail exclusive build slots active")
+            .with_detail(detail)
+            .with_remediation(
+                "Wait for exclusive build-slot holders to finish or coordinate before launching heavyweight cargo/RCH work",
+            )
+            .with_data(data);
+    }
+    if counts.soon_expiring > 0 {
+        return Finding::warn(CheckCategory::Swarm, "Agent Mail build slots expire soon")
+            .with_detail(detail)
+            .with_remediation("Renew build-slot leases before long-running cargo/RCH work")
+            .with_data(data);
+    }
+    if counts.active > 0 {
+        return Finding::info(CheckCategory::Swarm, "Agent Mail shared build slots active")
+            .with_detail(detail)
+            .with_data(data);
+    }
+    if counts.stale > 0 {
+        return Finding::info(
+            CheckCategory::Swarm,
+            "Agent Mail stale build-slot records present",
+        )
+        .with_detail(detail)
+        .with_data(data);
+    }
+    Finding::pass(CheckCategory::Swarm, "Agent Mail build slots clear")
+        .with_detail(detail)
+        .with_data(data)
+}
+
+fn agent_mail_build_slots_unavailable_finding(reason: &str) -> Finding {
+    Finding::info(CheckCategory::Swarm, "Agent Mail build slots unavailable")
+        .with_detail(reason)
+        .with_data(serde_json::json!({
+            "schema": SWARM_DOCTOR_BUILD_SLOT_SCHEMA,
+            "source": "agent_mail_archive_build_slots",
+            "source_supported": false,
+            "reason": reason
+        }))
+}
+
+fn build_slot_classification_rank(classification: &str) -> u8 {
+    match classification {
+        "malformed" => 0,
+        "active" => 1,
+        "soon_expiring" => 2,
+        "stale_expired" => 3,
+        "released" => 4,
+        _ => 5,
+    }
+}
+
+fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_chars(value, 120))
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&Utc))
 }
 
 fn check_swarm_git(cwd: &Path, findings: &mut Vec<Finding>) {
@@ -2792,6 +3194,12 @@ mod tests {
         finding.data.as_ref().expect("structured finding data")
     }
 
+    fn build_slot_test_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-05-09T08:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     #[test]
     fn severity_ordering() {
         assert!(Severity::Pass < Severity::Info);
@@ -3178,6 +3586,111 @@ not-json
         let finding = classify_agent_mail_reservations(&value);
 
         assert_eq!(finding.severity, Severity::Pass);
+    }
+
+    #[test]
+    fn swarm_agent_mail_build_slots_pass_when_none_active() {
+        let finding = classify_agent_mail_build_slots(&[], 0, build_slot_test_now());
+
+        assert_eq!(finding.severity, Severity::Pass);
+        let data = finding_data(&finding);
+        assert_eq!(data["schema"], SWARM_DOCTOR_BUILD_SLOT_SCHEMA);
+        assert_eq!(data["source_supported"], serde_json::json!(true));
+        assert_eq!(data["active_count"], serde_json::json!(0));
+        assert_eq!(data["slots"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn swarm_agent_mail_build_slots_reports_active_shared_slot() {
+        let values = vec![serde_json::json!({
+            "slot": "cargo-check",
+            "agent": "BlueLake",
+            "branch": "main",
+            "exclusive": false,
+            "acquired_ts": "2026-05-09T07:45:00Z",
+            "expires_ts": "2026-05-09T10:00:00Z"
+        })];
+
+        let finding = classify_agent_mail_build_slots(&values, 0, build_slot_test_now());
+
+        assert_eq!(finding.severity, Severity::Info);
+        let data = finding_data(&finding);
+        assert_eq!(data["active_count"], serde_json::json!(1));
+        assert_eq!(data["active_shared_count"], serde_json::json!(1));
+        assert_eq!(data["slots"][0]["slot"], "cargo-check");
+        assert_eq!(data["slots"][0]["agent"], "BlueLake");
+        assert_eq!(data["slots"][0]["exclusive"], serde_json::json!(false));
+        assert_eq!(data["slots"][0]["expires_ts"], "2026-05-09T10:00:00Z");
+        assert_eq!(data["slots"][0]["classification"], "active");
+    }
+
+    #[test]
+    fn swarm_agent_mail_build_slots_warn_on_active_exclusive_slot() {
+        let values = vec![serde_json::json!({
+            "slot": "cargo-clippy",
+            "agent": "GreenBridge",
+            "branch": "main",
+            "exclusive": true,
+            "expires_ts": "2026-05-09T10:00:00Z"
+        })];
+
+        let finding = classify_agent_mail_build_slots(&values, 0, build_slot_test_now());
+
+        assert_eq!(finding.severity, Severity::Warn);
+        assert!(finding.title.contains("exclusive"));
+        let data = finding_data(&finding);
+        assert_eq!(data["active_count"], serde_json::json!(1));
+        assert_eq!(data["active_exclusive_count"], serde_json::json!(1));
+        assert_eq!(data["slots"][0]["agent"], "GreenBridge");
+        assert_eq!(data["slots"][0]["classification"], "active");
+    }
+
+    #[test]
+    fn swarm_agent_mail_build_slots_classify_expired_and_soon_expiring_slots() {
+        let values = vec![
+            serde_json::json!({
+                "slot": "cargo-test",
+                "agent": "AmberField",
+                "branch": "main",
+                "exclusive": false,
+                "expires_ts": "2026-05-09T07:59:00Z"
+            }),
+            serde_json::json!({
+                "slot": "cargo-check",
+                "agent": "CyanHill",
+                "branch": "main",
+                "exclusive": false,
+                "expires_ts": "2026-05-09T08:20:00Z"
+            }),
+        ];
+
+        let finding = classify_agent_mail_build_slots(&values, 0, build_slot_test_now());
+
+        assert_eq!(finding.severity, Severity::Warn);
+        let data = finding_data(&finding);
+        assert_eq!(data["active_count"], serde_json::json!(1));
+        assert_eq!(data["soon_expiring_count"], serde_json::json!(1));
+        assert_eq!(data["stale_count"], serde_json::json!(1));
+        let classifications = data["slots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|slot| slot["classification"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(classifications.contains(&"soon_expiring"));
+        assert!(classifications.contains(&"stale_expired"));
+    }
+
+    #[test]
+    fn swarm_agent_mail_build_slots_report_missing_support() {
+        let finding =
+            agent_mail_build_slots_unavailable_finding("build-slot source is unavailable");
+
+        assert_eq!(finding.severity, Severity::Info);
+        assert_eq!(finding.title, "Agent Mail build slots unavailable");
+        let data = finding_data(&finding);
+        assert_eq!(data["source_supported"], serde_json::json!(false));
+        assert_eq!(data["reason"], "build-slot source is unavailable");
     }
 
     #[test]
