@@ -41,7 +41,7 @@ Digests include:
 
 The JSON form is stable for automation. The text form is deterministic for handoff notes and uses only the already-redacted summaries and selected detail fields. Prompt bodies, transcripts, tokens, API keys, cookies, authorization headers, and other sensitive values remain redacted before they can reach either output.
 
-Use saturation as a stop-and-redirect signal, not as a performance claim. When the digest reports closed-surface churn, stale introductions, or high chatter with low throughput, stop launching more agents on the same review loop and switch to a narrower implementation bead, a deeper audit of one subsystem, or explicit blocker cleanup. The `saturation.evidence_pointers` field names the redacted agent, bead, thread, or window counts that caused each signal so operators can verify the decision without reading prompt bodies.
+Use saturation as a stop-and-redirect signal, not as a performance claim. When the digest reports closed-surface churn, stale introductions, or high chatter with low throughput, stop launching more agents on the same review loop and switch to a narrower implementation bead, a deeper audit of one subsystem, or explicit blocker cleanup. The `saturation.signals` field lists the active typed signals, and `saturation.evidence_pointers` names the redacted agent, bead, thread, or window counts that caused each signal so operators can verify the decision without reading prompt bodies.
 
 ## Tail-latency regime guard
 

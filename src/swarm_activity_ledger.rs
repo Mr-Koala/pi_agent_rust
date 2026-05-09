@@ -33,6 +33,18 @@ pub const DEFAULT_SWARM_ACTIVITY_STALE_THREAD_AFTER_MS: u64 = 30 * 60 * 1000;
 /// Default effort window for saturation detection.
 pub const DEFAULT_SWARM_ACTIVITY_SATURATION_WINDOW_MS: u64 = 60 * 60 * 1000;
 
+/// Default repeated closed-surface edit count that flags saturation.
+pub const DEFAULT_SWARM_ACTIVITY_CLOSED_SURFACE_EDIT_THRESHOLD: u64 = 2;
+
+/// Default stale introduction count that flags saturation.
+pub const DEFAULT_SWARM_ACTIVITY_STALE_INTRODUCTION_THRESHOLD: u64 = 2;
+
+/// Default Agent Mail chatter count that can flag low-throughput saturation.
+pub const DEFAULT_SWARM_ACTIVITY_COORDINATION_CHATTER_THRESHOLD: u64 = 5;
+
+/// Default maximum throughput events allowed during high-chatter saturation.
+pub const DEFAULT_SWARM_ACTIVITY_LOW_THROUGHPUT_THRESHOLD: u64 = 1;
+
 const REDACTED: &str = "[REDACTED]";
 const HOTSPOT_KEY_MAX_CHARS: usize = 240;
 const DETAIL_HOTSPOT_KEYS: &[&str] = &[
@@ -119,6 +131,18 @@ pub struct SwarmActivityDigestConfig {
     pub duplicate_work_threshold: u64,
     /// Count at which a blocker key is considered repeated.
     pub repeated_blocker_threshold: u64,
+    /// Count at which edits to already-closed bead surfaces become a signal.
+    #[serde(default = "default_closed_surface_edit_threshold")]
+    pub closed_surface_edit_threshold: u64,
+    /// Count at which introductions without later claims become a signal.
+    #[serde(default = "default_stale_introduction_threshold")]
+    pub stale_introduction_threshold: u64,
+    /// Agent Mail events in the effort window that trigger throughput review.
+    #[serde(default = "default_coordination_chatter_threshold")]
+    pub coordination_chatter_threshold: u64,
+    /// Maximum throughput events allowed when chatter is above threshold.
+    #[serde(default = "default_low_throughput_threshold")]
+    pub low_throughput_event_threshold: u64,
 }
 
 impl Default for SwarmActivityDigestConfig {
@@ -130,6 +154,10 @@ impl Default for SwarmActivityDigestConfig {
             min_new_bugs_per_window: 1,
             duplicate_work_threshold: 2,
             repeated_blocker_threshold: 2,
+            closed_surface_edit_threshold: DEFAULT_SWARM_ACTIVITY_CLOSED_SURFACE_EDIT_THRESHOLD,
+            stale_introduction_threshold: DEFAULT_SWARM_ACTIVITY_STALE_INTRODUCTION_THRESHOLD,
+            coordination_chatter_threshold: DEFAULT_SWARM_ACTIVITY_COORDINATION_CHATTER_THRESHOLD,
+            low_throughput_event_threshold: DEFAULT_SWARM_ACTIVITY_LOW_THROUGHPUT_THRESHOLD,
         }
     }
 }
@@ -152,8 +180,28 @@ impl SwarmActivityDigestConfig {
             min_new_bugs_per_window,
             duplicate_work_threshold,
             repeated_blocker_threshold,
+            closed_surface_edit_threshold: DEFAULT_SWARM_ACTIVITY_CLOSED_SURFACE_EDIT_THRESHOLD,
+            stale_introduction_threshold: DEFAULT_SWARM_ACTIVITY_STALE_INTRODUCTION_THRESHOLD,
+            coordination_chatter_threshold: DEFAULT_SWARM_ACTIVITY_COORDINATION_CHATTER_THRESHOLD,
+            low_throughput_event_threshold: DEFAULT_SWARM_ACTIVITY_LOW_THROUGHPUT_THRESHOLD,
         }
     }
+}
+
+const fn default_closed_surface_edit_threshold() -> u64 {
+    DEFAULT_SWARM_ACTIVITY_CLOSED_SURFACE_EDIT_THRESHOLD
+}
+
+const fn default_stale_introduction_threshold() -> u64 {
+    DEFAULT_SWARM_ACTIVITY_STALE_INTRODUCTION_THRESHOLD
+}
+
+const fn default_coordination_chatter_threshold() -> u64 {
+    DEFAULT_SWARM_ACTIVITY_COORDINATION_CHATTER_THRESHOLD
+}
+
+const fn default_low_throughput_threshold() -> u64 {
+    DEFAULT_SWARM_ACTIVITY_LOW_THROUGHPUT_THRESHOLD
 }
 
 /// Count for one retained hot spot key.
@@ -252,6 +300,26 @@ pub struct SwarmActivityStaleThread {
 }
 
 /// Saturation signals derived from a bounded swarm transcript digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwarmActivitySaturationSignal {
+    /// The effort window contains fewer newly filed bugs than expected.
+    FewNewBugs,
+    /// Blocker events repeat across the represented transcript.
+    RepeatedBlockers,
+    /// Duplicate-work events cross the configured threshold.
+    DuplicateWork,
+    /// Agents edited or reserved surfaces for already-closed beads.
+    RepeatedClosedSurfaceEdits,
+    /// Agent introductions did not lead to later claim or reservation evidence.
+    StaleIntroductionsWithoutClaims,
+    /// Coordination chatter is high while closeout throughput is low.
+    HighChatterLowThroughput,
+    /// Agent Mail threads are stale relative to the newest event.
+    StaleThreads,
+}
+
+/// Saturation metrics derived from a bounded swarm transcript digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SwarmActivitySaturationSignals {
     /// Effort window used for new-bug counting.
@@ -267,12 +335,38 @@ pub struct SwarmActivitySaturationSignals {
     pub repeated_blocker_count: u64,
     /// Duplicate-work events in the represented transcript.
     pub duplicate_work_count: u64,
+    /// Events that indicate edits or reservations against already-closed bead surfaces.
+    #[serde(default)]
+    pub closed_surface_edit_count: u64,
+    /// Introductory Agent Mail events that never turn into a claim/reservation.
+    #[serde(default)]
+    pub stale_introduction_count: u64,
+    /// Agent Mail events in the current effort window.
+    #[serde(default)]
+    pub coordination_chatter_count: u64,
+    /// Commit, validation, or closeout events in the current effort window.
+    #[serde(default)]
+    pub throughput_event_count: u64,
     /// Stale Agent Mail thread count.
     pub stale_thread_count: u64,
+    /// Typed active saturation signals.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub signals: BTreeSet<SwarmActivitySaturationSignal>,
     /// True when any saturation signal is active.
     pub saturated: bool,
     /// Stable textual reasons for active signals.
     pub reasons: Vec<String>,
+    /// Stable redacted pointers to representative evidence behind the signals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_pointers: Vec<String>,
+}
+
+impl SwarmActivitySaturationSignals {
+    /// Return whether the digest carries a typed saturation signal.
+    #[must_use]
+    pub fn has_signal(&self, signal: SwarmActivitySaturationSignal) -> bool {
+        self.signals.contains(&signal)
+    }
 }
 
 /// Deterministic redacted digest for swarm handoff and saturation review.
@@ -347,6 +441,12 @@ impl SwarmActivityDigest {
         } else {
             for reason in &self.saturation.reasons {
                 let _ = writeln!(out, "- {reason}");
+            }
+        }
+        if !self.saturation.evidence_pointers.is_empty() {
+            out.push_str("Saturation evidence:\n");
+            for pointer in &self.saturation.evidence_pointers {
+                let _ = writeln!(out, "- {pointer}");
             }
         }
         out
@@ -951,13 +1051,13 @@ pub fn digest_entries_with_config(
         last_timestamp_ms,
         active_agents: top_hotspots(&agent_counts, config.max_items),
         bead_changes: recent_digest_items(entries, config.max_items, |entry| {
-            entry.kind == SwarmActivityKind::BeadStatus
+            matches!(entry.kind, SwarmActivityKind::BeadStatus)
         }),
         agent_mail_activity: recent_digest_items(entries, config.max_items, |entry| {
-            entry.kind == SwarmActivityKind::AgentMail
+            matches!(entry.kind, SwarmActivityKind::AgentMail)
         }),
         file_reservations: recent_digest_items(entries, config.max_items, |entry| {
-            entry.kind == SwarmActivityKind::FileReservation
+            matches!(entry.kind, SwarmActivityKind::FileReservation)
         }),
         verification_evidence: recent_digest_items(entries, config.max_items, |entry| {
             matches!(
@@ -1089,56 +1189,267 @@ fn saturation_signals(
     let last_timestamp_ms = entries.iter().map(|entry| entry.timestamp_ms).max();
     let window_start_ms = last_timestamp_ms
         .map(|timestamp_ms| timestamp_ms.saturating_sub(config.saturation_window_ms));
-    let new_bug_count = window_start_ms.map_or(0, |start_ms| {
-        entries
-            .iter()
-            .filter(|entry| entry.timestamp_ms >= start_ms && is_new_bug_entry(entry))
-            .count()
-            .try_into()
-            .unwrap_or(u64::MAX)
-    });
-    let duplicate_work_count = entries
-        .iter()
-        .filter(|entry| is_duplicate_work_entry(entry))
-        .count()
-        .try_into()
-        .unwrap_or(u64::MAX);
-    let repeated_blocker_count = repeated_blockers
-        .iter()
-        .map(|hotspot| hotspot.count)
-        .sum::<u64>();
-    let stale_thread_count = usize_to_u64(stale_threads.len());
-    let few_new_bugs = !entries.is_empty() && new_bug_count < config.min_new_bugs_per_window;
+    let counts =
+        saturation_signal_counts(entries, repeated_blockers, stale_threads, window_start_ms);
+    let mut evidence = saturation_signal_evidence(
+        entries,
+        config,
+        repeated_blockers,
+        stale_threads,
+        &counts,
+        window_start_ms,
+    );
+    evidence.evidence_pointers.truncate(config.max_items);
 
-    let mut reasons = Vec::new();
-    if few_new_bugs {
-        reasons.push(format!(
-            "few_new_bugs: {new_bug_count} in {} ms",
-            config.saturation_window_ms
-        ));
-    }
-    if repeated_blocker_count > 0 {
-        reasons.push(format!("repeated_blockers: {repeated_blocker_count}"));
-    }
-    if duplicate_work_count >= config.duplicate_work_threshold {
-        reasons.push(format!("duplicate_work: {duplicate_work_count}"));
-    }
-    if stale_thread_count > 0 {
-        reasons.push(format!("stale_threads: {stale_thread_count}"));
-    }
-    let saturated = !reasons.is_empty();
+    let few_new_bugs = evidence
+        .signals
+        .contains(&SwarmActivitySaturationSignal::FewNewBugs);
+    let saturated = !evidence.signals.is_empty();
 
     SwarmActivitySaturationSignals {
         window_ms: config.saturation_window_ms,
         window_start_ms,
-        new_bug_count,
+        new_bug_count: counts.new_bugs,
         few_new_bugs,
-        repeated_blocker_count,
-        duplicate_work_count,
-        stale_thread_count,
+        repeated_blocker_count: counts.repeated_blockers,
+        duplicate_work_count: counts.duplicate_work,
+        closed_surface_edit_count: counts.closed_surface_edits,
+        stale_introduction_count: counts.stale_introductions,
+        coordination_chatter_count: counts.coordination_chatter,
+        throughput_event_count: counts.throughput_events,
+        stale_thread_count: counts.stale_threads,
+        signals: evidence.signals,
         saturated,
-        reasons,
+        reasons: evidence.reasons,
+        evidence_pointers: evidence.evidence_pointers,
     }
+}
+
+#[derive(Default)]
+struct SaturationSignalCounts {
+    new_bugs: u64,
+    duplicate_work: u64,
+    closed_surface_edits: u64,
+    stale_introductions: u64,
+    coordination_chatter: u64,
+    throughput_events: u64,
+    repeated_blockers: u64,
+    stale_threads: u64,
+}
+
+#[derive(Default)]
+struct SaturationEvidence {
+    signals: BTreeSet<SwarmActivitySaturationSignal>,
+    reasons: Vec<String>,
+    evidence_pointers: Vec<String>,
+}
+
+fn saturation_signal_counts(
+    entries: &[SwarmActivityLedgerEntry],
+    repeated_blockers: &[SwarmActivityHotspot],
+    stale_threads: &[SwarmActivityStaleThread],
+    window_start_ms: Option<u64>,
+) -> SaturationSignalCounts {
+    let in_window = |entry: &SwarmActivityLedgerEntry| {
+        window_start_ms.is_none_or(|start| entry.timestamp_ms >= start)
+    };
+
+    SaturationSignalCounts {
+        new_bugs: window_start_ms.map_or(0, |start_ms| {
+            count_entries(entries, |entry| {
+                entry.timestamp_ms >= start_ms && is_new_bug_entry(entry)
+            })
+        }),
+        duplicate_work: count_entries(entries, is_duplicate_work_entry),
+        closed_surface_edits: count_entries(entries, is_closed_surface_edit_entry),
+        stale_introductions: usize_to_u64(stale_introduction_pointers(entries, usize::MAX).len()),
+        coordination_chatter: count_entries(entries, |entry| {
+            in_window(entry) && is_coordination_chatter_entry(entry)
+        }),
+        throughput_events: count_entries(entries, |entry| {
+            in_window(entry) && is_throughput_entry(entry)
+        }),
+        repeated_blockers: repeated_blockers.iter().map(|hotspot| hotspot.count).sum(),
+        stale_threads: usize_to_u64(stale_threads.len()),
+    }
+}
+
+fn saturation_signal_evidence(
+    entries: &[SwarmActivityLedgerEntry],
+    config: SwarmActivityDigestConfig,
+    repeated_blockers: &[SwarmActivityHotspot],
+    stale_threads: &[SwarmActivityStaleThread],
+    counts: &SaturationSignalCounts,
+    window_start_ms: Option<u64>,
+) -> SaturationEvidence {
+    let mut evidence = SaturationEvidence::default();
+    push_new_bug_signal(entries, config, counts, window_start_ms, &mut evidence);
+    push_repeated_blocker_signal(counts, repeated_blockers, &mut evidence);
+    push_duplicate_work_signal(config, counts, &mut evidence);
+    push_closed_surface_signal(entries, config, counts, &mut evidence);
+    push_stale_introduction_signal(entries, config, counts, &mut evidence);
+    push_chatter_throughput_signal(config, counts, &mut evidence);
+    push_stale_thread_signal(counts, stale_threads, &mut evidence);
+    evidence
+}
+
+fn push_saturation_signal<I>(
+    evidence: &mut SaturationEvidence,
+    signal: SwarmActivitySaturationSignal,
+    reason: String,
+    pointers: I,
+) where
+    I: IntoIterator<Item = String>,
+{
+    evidence.signals.insert(signal);
+    evidence.reasons.push(reason);
+    evidence.evidence_pointers.extend(pointers);
+}
+
+fn push_new_bug_signal(
+    entries: &[SwarmActivityLedgerEntry],
+    config: SwarmActivityDigestConfig,
+    counts: &SaturationSignalCounts,
+    window_start_ms: Option<u64>,
+    evidence: &mut SaturationEvidence,
+) {
+    if entries.is_empty() || counts.new_bugs >= config.min_new_bugs_per_window {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::FewNewBugs,
+        format!(
+            "few_new_bugs: {} in {} ms",
+            counts.new_bugs, config.saturation_window_ms
+        ),
+        [format!(
+            "new_bug_window:start={}",
+            window_start_ms.unwrap_or(0)
+        )],
+    );
+}
+
+fn push_repeated_blocker_signal(
+    counts: &SaturationSignalCounts,
+    repeated_blockers: &[SwarmActivityHotspot],
+    evidence: &mut SaturationEvidence,
+) {
+    if counts.repeated_blockers == 0 {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::RepeatedBlockers,
+        format!("repeated_blockers: {}", counts.repeated_blockers),
+        repeated_blockers
+            .iter()
+            .map(|hotspot| format!("repeated_blocker:{}={}", hotspot.key, hotspot.count)),
+    );
+}
+
+fn push_duplicate_work_signal(
+    config: SwarmActivityDigestConfig,
+    counts: &SaturationSignalCounts,
+    evidence: &mut SaturationEvidence,
+) {
+    if counts.duplicate_work < config.duplicate_work_threshold {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::DuplicateWork,
+        format!("duplicate_work: {}", counts.duplicate_work),
+        [format!("duplicate_work:count={}", counts.duplicate_work)],
+    );
+}
+
+fn push_closed_surface_signal(
+    entries: &[SwarmActivityLedgerEntry],
+    config: SwarmActivityDigestConfig,
+    counts: &SaturationSignalCounts,
+    evidence: &mut SaturationEvidence,
+) {
+    if counts.closed_surface_edits < config.closed_surface_edit_threshold {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::RepeatedClosedSurfaceEdits,
+        format!("closed_surface_edits: {}", counts.closed_surface_edits),
+        closed_surface_edit_pointers(entries, config.max_items),
+    );
+}
+
+fn push_stale_introduction_signal(
+    entries: &[SwarmActivityLedgerEntry],
+    config: SwarmActivityDigestConfig,
+    counts: &SaturationSignalCounts,
+    evidence: &mut SaturationEvidence,
+) {
+    if counts.stale_introductions < config.stale_introduction_threshold {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::StaleIntroductionsWithoutClaims,
+        format!("stale_introductions: {}", counts.stale_introductions),
+        stale_introduction_pointers(entries, config.max_items),
+    );
+}
+
+fn push_chatter_throughput_signal(
+    config: SwarmActivityDigestConfig,
+    counts: &SaturationSignalCounts,
+    evidence: &mut SaturationEvidence,
+) {
+    if counts.coordination_chatter < config.coordination_chatter_threshold
+        || counts.throughput_events > config.low_throughput_event_threshold
+    {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::HighChatterLowThroughput,
+        format!(
+            "high_chatter_low_throughput: chatter={} throughput={}",
+            counts.coordination_chatter, counts.throughput_events
+        ),
+        [format!(
+            "coordination_window:chatter={},throughput={}",
+            counts.coordination_chatter, counts.throughput_events
+        )],
+    );
+}
+
+fn push_stale_thread_signal(
+    counts: &SaturationSignalCounts,
+    stale_threads: &[SwarmActivityStaleThread],
+    evidence: &mut SaturationEvidence,
+) {
+    if counts.stale_threads == 0 {
+        return;
+    }
+    push_saturation_signal(
+        evidence,
+        SwarmActivitySaturationSignal::StaleThreads,
+        format!("stale_threads: {}", counts.stale_threads),
+        stale_threads
+            .iter()
+            .map(|thread| format!("stale_thread:{}", thread.mail_thread_id)),
+    );
+}
+
+fn count_entries<F>(entries: &[SwarmActivityLedgerEntry], predicate: F) -> u64
+where
+    F: Fn(&SwarmActivityLedgerEntry) -> bool,
+{
+    entries
+        .iter()
+        .filter(|entry| predicate(entry))
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 #[derive(Default)]
@@ -1176,6 +1487,166 @@ fn is_duplicate_work_entry(entry: &SwarmActivityLedgerEntry) -> bool {
             "same bead",
         ],
     )
+}
+
+fn is_closed_surface_edit_entry(entry: &SwarmActivityLedgerEntry) -> bool {
+    let closed_signal = detail_equals(entry, "status", "closed")
+        || entry_contains_any(
+            entry,
+            &[
+                "already-closed",
+                "already closed",
+                "closed bead",
+                "closed issue",
+                "closed surface",
+            ],
+        );
+    let surface_signal = entry_contains_any(
+        entry,
+        &[
+            "edit",
+            "edited",
+            "file",
+            "modified",
+            "path",
+            "reservation",
+            "reserved",
+            "surface",
+            "touch",
+        ],
+    );
+    closed_signal && surface_signal
+}
+
+fn closed_surface_edit_pointers(
+    entries: &[SwarmActivityLedgerEntry],
+    max_items: usize,
+) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|entry| is_closed_surface_edit_entry(entry))
+        .take(max_items)
+        .map(|entry| {
+            format!(
+                "closed_surface_edit:{}",
+                saturation_actor_key(entry).unwrap_or_else(|| entry.ids.correlation_id.clone())
+            )
+        })
+        .collect()
+}
+
+fn stale_introduction_pointers(
+    entries: &[SwarmActivityLedgerEntry],
+    max_items: usize,
+) -> Vec<String> {
+    let mut introduction_keys = BTreeSet::new();
+    let mut claim_keys = BTreeSet::new();
+    for entry in entries {
+        if is_introduction_entry(entry) {
+            if let Some(key) = saturation_actor_key(entry) {
+                introduction_keys.insert(key);
+            }
+        }
+        if is_claim_or_reservation_entry(entry) {
+            for key in saturation_claim_keys(entry) {
+                claim_keys.insert(key);
+            }
+        }
+    }
+
+    introduction_keys
+        .difference(&claim_keys)
+        .take(max_items)
+        .map(|key| format!("stale_introduction:{key}"))
+        .collect()
+}
+
+fn is_introduction_entry(entry: &SwarmActivityLedgerEntry) -> bool {
+    matches!(entry.kind, SwarmActivityKind::AgentMail)
+        && entry_contains_any(entry, &["available", "hello", "intro", "introduc", "start"])
+        && !entry_contains_any(
+            entry,
+            &[
+                "claim",
+                "claimed",
+                "closed",
+                "completed",
+                "done",
+                "in_progress",
+                "reserved",
+            ],
+        )
+}
+
+fn is_claim_or_reservation_entry(entry: &SwarmActivityLedgerEntry) -> bool {
+    if detail_equals(entry, "status", "closed")
+        || entry_contains_any(
+            entry,
+            &[
+                "already-closed",
+                "already closed",
+                "closed bead",
+                "closed issue",
+                "closed surface",
+            ],
+        )
+    {
+        return false;
+    }
+
+    matches!(
+        entry.kind,
+        SwarmActivityKind::BeadStatus | SwarmActivityKind::FileReservation
+    ) && (detail_equals(entry, "status", "in_progress")
+        || detail_equals(entry, "status", "claimed")
+        || detail_equals(entry, "action", "claim")
+        || detail_equals(entry, "action", "reserved")
+        || entry_contains_any(entry, &["claim", "claimed", "in_progress", "reserved"]))
+}
+
+const fn is_coordination_chatter_entry(entry: &SwarmActivityLedgerEntry) -> bool {
+    matches!(entry.kind, SwarmActivityKind::AgentMail)
+}
+
+fn is_throughput_entry(entry: &SwarmActivityLedgerEntry) -> bool {
+    match entry.kind {
+        SwarmActivityKind::GitCommit => true,
+        SwarmActivityKind::Verification | SwarmActivityKind::RchJob => {
+            detail_equals(entry, "status", "ok")
+                || detail_equals(entry, "status", "pass")
+                || detail_equals(entry, "status", "passed")
+                || detail_equals(entry, "status", "success")
+                || entry_contains_any(entry, &["passed", "success", "succeeded"])
+        }
+        SwarmActivityKind::BeadStatus => {
+            detail_equals(entry, "status", "closed")
+                || detail_equals(entry, "status", "completed")
+                || entry_contains_any(entry, &["closed", "completed"])
+        }
+        _ => false,
+    }
+}
+
+fn saturation_actor_key(entry: &SwarmActivityLedgerEntry) -> Option<String> {
+    entry
+        .ids
+        .agent_name
+        .as_deref()
+        .or(entry.ids.bead_id.as_deref())
+        .or(entry.ids.mail_thread_id.as_deref())
+        .map(bounded_hotspot_key)
+}
+
+fn saturation_claim_keys(entry: &SwarmActivityLedgerEntry) -> Vec<String> {
+    [
+        entry.ids.agent_name.as_deref(),
+        entry.ids.bead_id.as_deref(),
+        entry.ids.mail_thread_id.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(bounded_hotspot_key)
+    .collect()
 }
 
 fn is_new_bug_entry(entry: &SwarmActivityLedgerEntry) -> bool {
@@ -1587,8 +2058,8 @@ mod tests {
     use super::{
         SWARM_ACTIVITY_DIGEST_SCHEMA, SWARM_ACTIVITY_LEDGER_SCHEMA, SWARM_ACTIVITY_SUMMARY_SCHEMA,
         SwarmActivityDigestConfig, SwarmActivityIds, SwarmActivityKind, SwarmActivityLedger,
-        SwarmActivityLedgerError, SwarmActivitySketch, SwarmActivitySummaryConfig,
-        digest_from_jsonl, entries_from_jsonl, timeline_from_jsonl,
+        SwarmActivityLedgerError, SwarmActivitySaturationSignal, SwarmActivitySketch,
+        SwarmActivitySummaryConfig, digest_from_jsonl, entries_from_jsonl, timeline_from_jsonl,
     };
 
     #[test]
@@ -1676,7 +2147,10 @@ mod tests {
             ],
         );
 
-        let entry = &ledger.entries()[0];
+        let entry = ledger
+            .entries()
+            .first()
+            .expect("redaction fixture should append one entry");
 
         assert_eq!(entry.summary, "[REDACTED]");
         assert_eq!(
@@ -2015,6 +2489,134 @@ mod tests {
         assert!(digest.saturation.few_new_bugs);
         assert!(digest.saturation.saturated);
         assert_eq!(digest.saturation.reasons[0], "few_new_bugs: 0 in 60000 ms");
+    }
+
+    #[test]
+    fn digest_flags_saturation_from_stale_intros_closed_surfaces_and_chatter() {
+        let mut ledger = SwarmActivityLedger::new();
+        append_saturation_signal_fixture(&mut ledger);
+
+        let digest = ledger.digest_with_config(saturation_signal_test_config());
+        let text = digest.to_text();
+
+        assert!(digest.saturation.saturated);
+        assert!(
+            digest
+                .saturation
+                .has_signal(SwarmActivitySaturationSignal::RepeatedClosedSurfaceEdits)
+        );
+        assert!(
+            digest
+                .saturation
+                .has_signal(SwarmActivitySaturationSignal::StaleIntroductionsWithoutClaims)
+        );
+        assert!(
+            digest
+                .saturation
+                .has_signal(SwarmActivitySaturationSignal::HighChatterLowThroughput)
+        );
+        assert_eq!(digest.saturation.closed_surface_edit_count, 2);
+        assert_eq!(digest.saturation.stale_introduction_count, 2);
+        assert_eq!(digest.saturation.coordination_chatter_count, 7);
+        assert_eq!(digest.saturation.throughput_event_count, 1);
+        assert!(
+            digest
+                .saturation
+                .evidence_pointers
+                .iter()
+                .any(|pointer| pointer.starts_with("closed_surface_edit:"))
+        );
+        assert!(
+            digest
+                .saturation
+                .evidence_pointers
+                .iter()
+                .any(|pointer| pointer == "stale_introduction:IdleOne")
+        );
+        assert!(text.contains("high_chatter_low_throughput: chatter=7 throughput=1"));
+        assert!(text.contains("Saturation evidence:"));
+    }
+
+    fn append_saturation_signal_fixture(ledger: &mut SwarmActivityLedger) {
+        ledger.append(
+            1_000,
+            SwarmActivityKind::AgentMail,
+            SwarmActivityIds::new("intro-idle-1").with_agent_name("IdleOne"),
+            "hello, available for work",
+            [("subject", "intro")],
+        );
+        ledger.append(
+            1_100,
+            SwarmActivityKind::AgentMail,
+            SwarmActivityIds::new("intro-idle-2").with_agent_name("IdleTwo"),
+            "introduction only, waiting for work",
+            [("subject", "intro")],
+        );
+        ledger.append(
+            1_200,
+            SwarmActivityKind::AgentMail,
+            SwarmActivityIds::new("intro-active").with_agent_name("ActiveAgent"),
+            "starting current bead",
+            [("subject", "start")],
+        );
+        ledger.append(
+            1_250,
+            SwarmActivityKind::BeadStatus,
+            SwarmActivityIds::new("claim-active").with_agent_name("ActiveAgent"),
+            "claimed bd-live",
+            [("status", "in_progress"), ("action", "claim")],
+        );
+        for index in 0_u64..4 {
+            ledger.append(
+                1_300 + index,
+                SwarmActivityKind::AgentMail,
+                SwarmActivityIds::new(format!("chatter-{index}")).with_agent_name("IdleOne"),
+                "coordination chatter without closeout",
+                [("subject", "status note")],
+            );
+        }
+        ledger.append(
+            1_500,
+            SwarmActivityKind::FileReservation,
+            SwarmActivityIds::new("closed-surface-1")
+                .with_agent_name("IdleOne")
+                .with_bead_id("bd-closed"),
+            "reserved already-closed bead surface",
+            [("path", "src/old.rs"), ("status", "closed")],
+        );
+        ledger.append(
+            1_600,
+            SwarmActivityKind::FileReservation,
+            SwarmActivityIds::new("closed-surface-2")
+                .with_agent_name("IdleTwo")
+                .with_bead_id("bd-closed"),
+            "edited closed bead surface again",
+            [("path", "docs/old.md"), ("status", "closed")],
+        );
+        ledger.append(
+            1_700,
+            SwarmActivityKind::GitCommit,
+            SwarmActivityIds::new("commit-1")
+                .with_agent_name("ActiveAgent")
+                .with_git_sha("abc123"),
+            "one commit pushed",
+            [("status", "success")],
+        );
+    }
+
+    fn saturation_signal_test_config() -> SwarmActivityDigestConfig {
+        SwarmActivityDigestConfig {
+            max_items: 8,
+            stale_thread_after_ms: 60_000,
+            saturation_window_ms: 10_000,
+            min_new_bugs_per_window: 0,
+            duplicate_work_threshold: 10,
+            repeated_blocker_threshold: 10,
+            closed_surface_edit_threshold: 2,
+            stale_introduction_threshold: 2,
+            coordination_chatter_threshold: 5,
+            low_throughput_event_threshold: 1,
+        }
     }
 
     #[test]
