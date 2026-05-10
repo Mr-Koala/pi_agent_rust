@@ -1,0 +1,280 @@
+{
+  "schema": "pi.traceability.high_value_suite_artifact_inventory.v1",
+  "generated_at": "2026-05-10T05:20:00Z",
+  "owner_bead": "bd-8t27h.9",
+  "purpose": "Inventory high-value verification suites that already emit or link machine-readable JSON/JSONL evidence so traceability governance can reference artifacts instead of prose-only claims.",
+  "ci_policy": {
+    "required_coverage_areas": [
+      "provider_streaming",
+      "sessions",
+      "extensions",
+      "rpc_tui_e2e",
+      "perf_report_generators",
+      "security_scenarios"
+    ],
+    "required_artifact_properties": [
+      "schema_tags",
+      "deterministic_replay_command",
+      "tmpdir_policy",
+      "traceability_matrix_reference"
+    ],
+    "consumed_by": [
+      "scripts/check_traceability_matrix.py",
+      "tests/ci_evidence_bundle.rs",
+      "tests/traceability_staleness.rs"
+    ]
+  },
+  "selected_suites": [
+    {
+      "id": "provider-streaming-jsonl",
+      "coverage_area": "provider_streaming",
+      "suite_ids": [
+        "provider_streaming",
+        "e2e_provider_streaming",
+        "e2e_provider_scenarios"
+      ],
+      "test_paths": [
+        "tests/provider_streaming.rs",
+        "tests/e2e_provider_streaming.rs",
+        "tests/e2e_provider_scenarios.rs"
+      ],
+      "artifact_refs": [
+        {
+          "path": "tests/e2e_results/**/e2e_streaming_results.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/e2e_results/**/e2e_streaming_log.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/e2e_results/**/e2e_comprehensive_report.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        }
+      ],
+      "schema_tags": [
+        "pi.test.log.v2",
+        "pi.test.artifact.v1"
+      ],
+      "deterministic_replay_command": "./scripts/e2e/run_all.sh --profile ci --suite e2e_provider_streaming --suite e2e_provider_scenarios",
+      "tmpdir_policy": "E2E runner writes per-run artifacts under tests/e2e_results or the configured runner output directory; suite internals use TestHarness temp paths."
+    },
+    {
+      "id": "session-jsonl-and-sidecar",
+      "coverage_area": "sessions",
+      "suite_ids": [
+        "session_conformance",
+        "session_connector_conformance",
+        "session_store_v2_contract",
+        "e2e_message_session_control",
+        "e2e_session_persistence"
+      ],
+      "test_paths": [
+        "tests/session_conformance.rs",
+        "tests/session_connector_conformance.rs",
+        "tests/session_store_v2_contract.rs",
+        "tests/e2e_message_session_control.rs",
+        "tests/e2e_session_persistence.rs"
+      ],
+      "artifact_refs": [
+        {
+          "path": "docs/schema/session_store_v2_contract.json",
+          "kind": "json_schema",
+          "generated_by_ci": false
+        },
+        {
+          "path": "tests/e2e_results/**/test-log.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/e2e_results/**/artifact-index.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        }
+      ],
+      "schema_tags": [
+        "pi.session_store_v2.contract.v1",
+        "pi.test.log.v2",
+        "pi.test.artifact.v1"
+      ],
+      "deterministic_replay_command": "./scripts/e2e/run_all.sh --profile ci --suite e2e_message_session_control --suite e2e_session_persistence",
+      "tmpdir_policy": "Session and E2E tests use harness-managed temp sessions and artifact-index records instead of repo-local mutable state."
+    },
+    {
+      "id": "extension-conformance-jsonl",
+      "coverage_area": "extensions",
+      "suite_ids": [
+        "ext_conformance",
+        "ext_conformance_artifacts",
+        "extensions_provider_streaming",
+        "extensions_message_session",
+        "e2e_ts_extension_loading"
+      ],
+      "test_paths": [
+        "tests/ext_conformance.rs",
+        "tests/ext_conformance_artifacts.rs",
+        "tests/extensions_provider_streaming.rs",
+        "tests/extensions_message_session.rs",
+        "tests/e2e_ts_extension_loading.rs"
+      ],
+      "artifact_refs": [
+        {
+          "path": "tests/ext_conformance/reports/conformance_events.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/ext_conformance/reports/parity/parity_events.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/ext_conformance/reports/scenario_conformance.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        }
+      ],
+      "schema_tags": [
+        "pi.ext.conformance_event",
+        "pi.ext.parity_event",
+        "pi.test.log.v2"
+      ],
+      "deterministic_replay_command": "./scripts/ext_quality_pipeline.sh --require-rch",
+      "tmpdir_policy": "Extension conformance writes reports under tests/ext_conformance/reports and per-case runtime state under harness temp directories."
+    },
+    {
+      "id": "rpc-tui-e2e-jsonl",
+      "coverage_area": "rpc_tui_e2e",
+      "suite_ids": [
+        "e2e_rpc",
+        "rpc_mode",
+        "rpc_protocol",
+        "tui_snapshot",
+        "e2e_tui",
+        "e2e_tui_features",
+        "e2e_tui_perf"
+      ],
+      "test_paths": [
+        "tests/e2e_rpc.rs",
+        "tests/rpc_mode.rs",
+        "tests/rpc_protocol.rs",
+        "tests/tui_snapshot.rs",
+        "tests/e2e_tui.rs",
+        "tests/e2e_tui_features.rs",
+        "tests/e2e_tui_perf.rs"
+      ],
+      "artifact_refs": [
+        {
+          "path": "tests/e2e_results/**/test-log.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/e2e_results/**/artifact-index.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/snapshots/tui_snapshot__*.snap",
+          "kind": "snapshot",
+          "generated_by_ci": false
+        }
+      ],
+      "schema_tags": [
+        "pi.test.log.v2",
+        "pi.test.artifact.v1",
+        "insta.snapshot"
+      ],
+      "deterministic_replay_command": "./scripts/e2e/run_all.sh --profile ci --suite e2e_rpc --suite e2e_tui",
+      "tmpdir_policy": "RPC/TUI E2E suites emit runner artifacts under the configured E2E output root; snapshots are committed deterministic fixtures."
+    },
+    {
+      "id": "perf-report-generator-jsonl",
+      "coverage_area": "perf_report_generators",
+      "suite_ids": [
+        "perf_budgets",
+        "perf_comparison",
+        "performance_comparison",
+        "perf_e2e",
+        "perf_baseline_variance"
+      ],
+      "test_paths": [
+        "tests/perf_budgets.rs",
+        "tests/perf_comparison.rs",
+        "tests/performance_comparison.rs",
+        "tests/perf_e2e.rs",
+        "tests/perf_baseline_variance.rs"
+      ],
+      "artifact_refs": [
+        {
+          "path": "tests/perf/reports/budget_events.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/perf/reports/perf_comparison_events.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/perf/reports/bench_schema_registry.json",
+          "kind": "json",
+          "generated_by_ci": false
+        }
+      ],
+      "schema_tags": [
+        "pi.perf.budget_event.v1",
+        "pi.perf.comparison_event.v1",
+        "pi.perf.bench_schema_registry.v1"
+      ],
+      "deterministic_replay_command": "python3 scripts/perf/preflight_budget_inputs.py && ./scripts/cargo_headroom.sh test perf_budgets perf_comparison",
+      "tmpdir_policy": "Perf orchestrators write caches under PERF_EVIDENCE_CACHE_DIR or CARGO_TARGET_DIR/perf and stage reports under tests/perf/reports."
+    },
+    {
+      "id": "security-scenario-jsonl",
+      "coverage_area": "security_scenarios",
+      "suite_ids": [
+        "e2e_security_scenario_sec66",
+        "e2e_security_scenarios",
+        "security_alert_integration",
+        "security_budgets",
+        "phase3_security_invariants"
+      ],
+      "test_paths": [
+        "tests/e2e_security_scenario_sec66.rs",
+        "tests/e2e_security_scenarios.rs",
+        "tests/security_alert_integration.rs",
+        "tests/security_budgets.rs",
+        "tests/phase3_security_invariants.rs"
+      ],
+      "artifact_refs": [
+        {
+          "path": "tests/security_compat/security_compat_events.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "tests/e2e_results/**/test-log.jsonl",
+          "kind": "jsonl",
+          "generated_by_ci": true
+        },
+        {
+          "path": "docs/security/invariants.machine.json",
+          "kind": "json",
+          "generated_by_ci": false
+        }
+      ],
+      "schema_tags": [
+        "pi.security.compat_event.v1",
+        "pi.test.log.v2",
+        "pi.security.invariants.v1"
+      ],
+      "deterministic_replay_command": "./scripts/e2e/run_all.sh --profile ci --suite e2e_security_scenario_sec66 --suite e2e_security_scenarios",
+      "tmpdir_policy": "Security scenarios use runner temp roots and committed invariant JSON; live credentials are not required for the default replay command."
+    }
+  ]
+}

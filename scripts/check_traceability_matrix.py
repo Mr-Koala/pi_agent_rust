@@ -23,10 +23,20 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MATRIX_PATH = REPO_ROOT / "docs" / "traceability_matrix.json"
 E2E_SCENARIO_MATRIX_PATH = REPO_ROOT / "docs" / "e2e_scenario_matrix.json"
+ARTIFACT_INVENTORY_PATH = REPO_ROOT / "docs" / "evidence" / "high-value-suite-artifact-inventory.json"
 SUITE_TOML_PATH = REPO_ROOT / "tests" / "suite_classification.toml"
 MIN_REQUIRED_CATEGORIES = ("unit_tests", "e2e_scripts", "evidence_logs")
 REQUIRED_E2E_SUITE_ARTIFACTS = ("output.log", "result.json", "test-log.jsonl", "artifact-index.jsonl")
 REQUIRED_E2E_RUN_ARTIFACTS = ("summary.json", "environment.json", "evidence_contract.json")
+REQUIRED_ARTIFACT_INVENTORY_AREAS = {
+    "provider_streaming",
+    "sessions",
+    "extensions",
+    "rpc_tui_e2e",
+    "perf_report_generators",
+    "security_scenarios",
+}
+ARTIFACT_INVENTORY_SCHEMA = "pi.traceability.high_value_suite_artifact_inventory.v1"
 ALLOWED_E2E_ROW_STATUSES = {"covered", "waived", "planned"}
 ALLOWED_E2E_SCENARIO_MATRIX_SCHEMAS = {
     "pi.e2e.scenario_matrix.v1",
@@ -457,6 +467,139 @@ def validate_e2e_scenario_matrix(
     return stats
 
 
+def matrix_references_evidence_path(matrix: dict[str, Any], required_path: str) -> bool:
+    for requirement in matrix.get("requirements", []):
+        if not isinstance(requirement, dict):
+            continue
+        for entry in requirement.get("evidence_logs", []):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("path") == required_path:
+                return True
+    return False
+
+
+def validate_high_value_artifact_inventory(
+    matrix: dict[str, Any],
+    errors: list[str],
+) -> dict[str, int]:
+    """Validate the machine-readable inventory that unblocks traceability repair."""
+    stats = {
+        "selected_suites": 0,
+        "coverage_areas": 0,
+        "artifact_refs": 0,
+    }
+
+    if not ARTIFACT_INVENTORY_PATH.exists():
+        fail(errors, f"missing high-value suite artifact inventory: {ARTIFACT_INVENTORY_PATH}")
+        return stats
+
+    try:
+        with ARTIFACT_INVENTORY_PATH.open("r", encoding="utf-8") as fh:
+            inventory = json.load(fh)
+    except json.JSONDecodeError as exc:
+        fail(errors, f"invalid JSON in {ARTIFACT_INVENTORY_PATH}: {exc}")
+        return stats
+
+    if not isinstance(inventory, dict):
+        fail(errors, "high-value suite artifact inventory root must be an object")
+        return stats
+
+    if inventory.get("schema") != ARTIFACT_INVENTORY_SCHEMA:
+        fail(
+            errors,
+            "high-value suite artifact inventory schema must be "
+            f"{ARTIFACT_INVENTORY_SCHEMA!r}",
+        )
+
+    generated_at = inventory.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        fail(errors, "high-value suite artifact inventory generated_at must be non-empty")
+
+    selected_suites = inventory.get("selected_suites")
+    if not isinstance(selected_suites, list) or not selected_suites:
+        fail(errors, "high-value suite artifact inventory selected_suites must be non-empty")
+        selected_suites = []
+    stats["selected_suites"] = len(selected_suites)
+
+    seen_areas: set[str] = set()
+    for index, suite in enumerate(selected_suites):
+        location = f"selected_suites[{index}]"
+        if not isinstance(suite, dict):
+            fail(errors, f"{location} must be an object")
+            continue
+
+        suite_id = suite.get("id")
+        if not isinstance(suite_id, str) or not suite_id.strip():
+            fail(errors, f"{location}.id must be a non-empty string")
+
+        coverage_area = suite.get("coverage_area")
+        if not isinstance(coverage_area, str) or not coverage_area.strip():
+            fail(errors, f"{location}.coverage_area must be a non-empty string")
+        else:
+            seen_areas.add(coverage_area)
+
+        for field in ("suite_ids", "test_paths", "schema_tags"):
+            value = suite.get(field)
+            if not isinstance(value, list) or not value:
+                fail(errors, f"{location}.{field} must be a non-empty array")
+                continue
+            for item in value:
+                if not isinstance(item, str) or not item.strip():
+                    fail(errors, f"{location}.{field} entries must be non-empty strings")
+
+        tmpdir_policy = suite.get("tmpdir_policy")
+        if not isinstance(tmpdir_policy, str) or not tmpdir_policy.strip():
+            fail(errors, f"{location}.tmpdir_policy must be a non-empty string")
+
+        replay = suite.get("deterministic_replay_command")
+        if not isinstance(replay, str) or not replay.strip():
+            fail(errors, f"{location}.deterministic_replay_command must be non-empty")
+
+        artifact_refs = suite.get("artifact_refs")
+        if not isinstance(artifact_refs, list) or not artifact_refs:
+            fail(errors, f"{location}.artifact_refs must be a non-empty array")
+            artifact_refs = []
+        stats["artifact_refs"] += len(artifact_refs)
+
+        for artifact_index, artifact in enumerate(artifact_refs):
+            artifact_location = f"{location}.artifact_refs[{artifact_index}]"
+            if not isinstance(artifact, dict):
+                fail(errors, f"{artifact_location} must be an object")
+                continue
+            path = artifact.get("path")
+            if not isinstance(path, str) or not path.strip():
+                fail(errors, f"{artifact_location}.path must be a non-empty string")
+                continue
+            if not bool(artifact.get("generated_by_ci", False)) and not resolve_exists(path):
+                fail(
+                    errors,
+                    f"{artifact_location}.path points to missing file/glob: {path!r}",
+                )
+            kind = artifact.get("kind")
+            if not isinstance(kind, str) or not kind.strip():
+                fail(errors, f"{artifact_location}.kind must be a non-empty string")
+
+    stats["coverage_areas"] = len(seen_areas)
+    missing_areas = REQUIRED_ARTIFACT_INVENTORY_AREAS - seen_areas
+    if missing_areas:
+        fail(
+            errors,
+            "high-value suite artifact inventory missing coverage areas: "
+            + ", ".join(sorted(missing_areas)),
+        )
+
+    relative_path = "docs/evidence/high-value-suite-artifact-inventory.json"
+    if not matrix_references_evidence_path(matrix, relative_path):
+        fail(
+            errors,
+            "traceability_matrix evidence_logs must reference "
+            f"{relative_path}",
+        )
+
+    return stats
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
@@ -550,6 +693,9 @@ def main() -> int:
     # Canonical E2E scenario matrix validation (bd-1f42.8.5.1).
     e2e_stats = validate_e2e_scenario_matrix(errors, warnings)
 
+    # High-value JSON/JSONL artifact inventory (bd-8t27h.9).
+    artifact_inventory_stats = validate_high_value_artifact_inventory(matrix, errors)
+
     if errors:
         print("TRACEABILITY CHECK FAILED")
         for error in errors:
@@ -589,6 +735,12 @@ def main() -> int:
             f"e2e matrix rows: {int(e2e_stats['rows'])} "
             f"(planned={int(e2e_stats['planned_rows'])}, waived={int(e2e_stats['waived_rows'])})"
         )
+    summary_parts.append(
+        "artifact inventory: "
+        f"{artifact_inventory_stats['selected_suites']} suites, "
+        f"{artifact_inventory_stats['coverage_areas']} areas, "
+        f"{artifact_inventory_stats['artifact_refs']} refs"
+    )
     print(f"TRACEABILITY CHECK PASSED: {'; '.join(summary_parts)}")
 
     if warnings:

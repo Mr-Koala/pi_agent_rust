@@ -330,6 +330,15 @@ const ARTIFACT_SOURCES: &[ArtifactSource] = &[
         is_directory: false,
         required: true,
     },
+    ArtifactSource {
+        id: "high_value_suite_artifact_inventory",
+        label: "High-value suite artifact inventory",
+        category: "traceability",
+        path: "docs/evidence/high-value-suite-artifact-inventory.json",
+        expected_schema: Some("pi.traceability.high_value_suite_artifact_inventory.v1"),
+        is_directory: false,
+        required: true,
+    },
     // ── Inventory ──
     ArtifactSource {
         id: "extension_inventory",

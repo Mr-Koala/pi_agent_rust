@@ -12,6 +12,17 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+const HIGH_VALUE_ARTIFACT_INVENTORY: &str =
+    "docs/evidence/high-value-suite-artifact-inventory.json";
+const REQUIRED_ARTIFACT_INVENTORY_AREAS: &[&str] = &[
+    "provider_streaming",
+    "sessions",
+    "extensions",
+    "rpc_tui_e2e",
+    "perf_report_generators",
+    "security_scenarios",
+];
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
@@ -91,6 +102,14 @@ fn load_matrix_min_trace_coverage_pct(root: &Path) -> usize {
                 path.display()
             )
         })
+}
+
+fn load_json_value(root: &Path, relative_path: &str) -> serde_json::Value {
+    let path = root.join(relative_path);
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("invalid JSON in {}: {e}", path.display()))
 }
 
 /// Discover all `tests/*.rs` file stems on disk.
@@ -243,6 +262,98 @@ fn source_inventory_diff_reports_missing_and_stale_entries() {
     let message = format_source_inventory_diff(&diff);
     assert!(message.contains("source files missing"));
     assert!(message.contains("stale docs/TEST_COVERAGE_MATRIX.md source rows"));
+}
+
+#[test]
+fn high_value_artifact_inventory_covers_required_lanes() {
+    let root = repo_root();
+    let inventory = load_json_value(&root, HIGH_VALUE_ARTIFACT_INVENTORY);
+    assert_eq!(
+        inventory["schema"],
+        "pi.traceability.high_value_suite_artifact_inventory.v1"
+    );
+
+    let suites = inventory["selected_suites"]
+        .as_array()
+        .expect("selected_suites must be an array");
+    assert!(
+        !suites.is_empty(),
+        "selected_suites must include high-value coverage lanes"
+    );
+
+    let mut areas = BTreeSet::new();
+    for suite in suites {
+        let area = suite["coverage_area"]
+            .as_str()
+            .expect("suite coverage_area must be a string");
+        areas.insert(area.to_string());
+
+        for field in ["suite_ids", "test_paths", "artifact_refs", "schema_tags"] {
+            assert!(
+                suite[field]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty()),
+                "{area}.{field} must be a non-empty array"
+            );
+        }
+        assert!(
+            suite["tmpdir_policy"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty()),
+            "{area}.tmpdir_policy must be non-empty"
+        );
+        assert!(
+            suite["deterministic_replay_command"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty()),
+            "{area}.deterministic_replay_command must be non-empty"
+        );
+
+        for artifact in suite["artifact_refs"].as_array().unwrap() {
+            let path = artifact["path"]
+                .as_str()
+                .expect("artifact path must be a string");
+            let generated_by_ci = artifact["generated_by_ci"].as_bool().unwrap_or(false);
+            let is_glob = path.contains('*') || path.contains('?') || path.contains('[');
+            if !generated_by_ci && !is_glob {
+                assert!(
+                    root.join(path).exists(),
+                    "non-generated artifact ref must exist: {path}"
+                );
+            }
+        }
+    }
+
+    for required in REQUIRED_ARTIFACT_INVENTORY_AREAS {
+        assert!(
+            areas.contains(*required),
+            "artifact inventory missing required coverage area: {required}"
+        );
+    }
+}
+
+#[test]
+fn traceability_matrix_links_high_value_artifact_inventory() {
+    let root = repo_root();
+    let matrix = load_json_value(&root, "docs/traceability_matrix.json");
+    let requirements = matrix["requirements"]
+        .as_array()
+        .expect("requirements must be an array");
+
+    let referenced = requirements.iter().any(|requirement| {
+        requirement["evidence_logs"]
+            .as_array()
+            .is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry["path"].as_str() == Some(HIGH_VALUE_ARTIFACT_INVENTORY))
+            })
+    });
+
+    assert!(
+        referenced,
+        "docs/traceability_matrix.json evidence_logs must link {HIGH_VALUE_ARTIFACT_INVENTORY}"
+    );
 }
 
 #[test]
