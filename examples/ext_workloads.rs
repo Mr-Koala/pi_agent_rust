@@ -42,6 +42,22 @@ const VOI_SCHEDULER_SCHEMA: &str = "pi.ext.voi_scheduler.v1";
 const TRACE_EVENT_SCHEMA: &str = "pi.ext.hostcall_trace.v1";
 const DEFAULT_MATRIX_FILENAME: &str = "ext_hostcall_hotspot_matrix.json";
 const DEFAULT_TRACE_FILENAME: &str = "ext_hostcall_bridge_trace.jsonl";
+
+#[derive(Clone, Copy)]
+enum PerfArtifact {
+    HotspotMatrix,
+    Trace,
+}
+
+impl PerfArtifact {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::HotspotMatrix => DEFAULT_MATRIX_FILENAME,
+            Self::Trace => DEFAULT_TRACE_FILENAME,
+        }
+    }
+}
+
 const DEFAULT_DOWNSTREAM_BEADS: &[&str] = &[
     "bd-3ar8v.4.12",
     "bd-3ar8v.4.20",
@@ -432,7 +448,7 @@ fn run() -> Result<()> {
     let trace_path = args
         .trace_out
         .clone()
-        .unwrap_or_else(|| default_perf_artifact_path(DEFAULT_TRACE_FILENAME));
+        .unwrap_or_else(|| default_perf_artifact_path(PerfArtifact::Trace));
     write_jsonl(&trace_path, &trace_events)?;
 
     let finished_at = Utc::now();
@@ -471,7 +487,7 @@ fn run() -> Result<()> {
 
     let matrix_path = args
         .matrix_out
-        .unwrap_or_else(|| default_perf_artifact_path(DEFAULT_MATRIX_FILENAME));
+        .unwrap_or_else(|| default_perf_artifact_path(PerfArtifact::HotspotMatrix));
     fs::write(&matrix_path, to_json_pretty(&hotspot_matrix)?)?;
     eprintln!(
         "[ext_workloads] wrote hotspot matrix: {}",
@@ -496,10 +512,39 @@ fn artifact_single_file_entry(name: &str) -> PathBuf {
         .join(format!("{name}.ts"))
 }
 
-fn default_perf_artifact_path(filename: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target/perf")
-        .join(filename)
+fn default_perf_artifact_path(artifact: PerfArtifact) -> PathBuf {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    if let Some(output_root) = std::env::var_os("PERF_EVIDENCE_DIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        return if output_root.is_absolute() {
+            output_root.join(artifact.name())
+        } else {
+            project_root.join(output_root).join(artifact.name())
+        };
+    }
+
+    if let Some(target_root) = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        let target_dir = if target_root.is_absolute() {
+            target_root
+        } else {
+            project_root.join(target_root)
+        };
+        return target_dir.join("perf").join(artifact.name());
+    }
+
+    std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(std::env::temp_dir)
+        .join("pi_agent_rust")
+        .join("ext_workloads")
+        .join(artifact.name())
 }
 
 fn to_json_line(value: &Value) -> Result<String> {

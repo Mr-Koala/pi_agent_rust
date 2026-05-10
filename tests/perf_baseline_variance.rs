@@ -317,8 +317,26 @@ fn project_root() -> PathBuf {
 fn output_dir() -> PathBuf {
     let base = std::env::var("PERF_REGRESSION_OUTPUT").ok().map_or_else(
         || {
+            if let Some(dir) = std::env::var_os("PERF_EVIDENCE_DIR")
+                .map(PathBuf::from)
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                return if dir.is_absolute() {
+                    dir
+                } else {
+                    project_root().join(dir)
+                };
+            }
+
             std::env::var("CARGO_TARGET_DIR").ok().map_or_else(
-                || project_root().join("target/perf"),
+                || {
+                    std::env::var_os("TMPDIR")
+                        .map(PathBuf::from)
+                        .filter(|path| !path.as_os_str().is_empty())
+                        .unwrap_or_else(std::env::temp_dir)
+                        .join("pi_agent_rust")
+                        .join("baseline_variance")
+                },
                 |dir| {
                     let target_dir = PathBuf::from(dir);
                     if target_dir.is_absolute() {

@@ -13,6 +13,7 @@
 )]
 
 use serde::{Deserialize, Serialize};
+use std::path::Component;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -237,6 +238,44 @@ fn hyperfine_path(root: &Path, tool_calls: u32) -> PathBuf {
     let legacy = format!("target/perf/hyperfine_pijs_workload_{scenario}.json");
 
     find_first_existing(root, &[&perf, &release, &debug, &legacy])
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReportOutputMode {
+    EvidenceDir,
+    TempSmoke,
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+fn resolve_under_root(root: &Path, candidate: PathBuf) -> PathBuf {
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        assert!(
+            candidate
+                .components()
+                .all(|component| !matches!(component, Component::ParentDir)),
+            "PERF_EVIDENCE_DIR relative paths must stay under the project root"
+        );
+        root.join(candidate)
+    }
+}
+
+fn perf_comparison_report_dir(root: &Path) -> (PathBuf, ReportOutputMode) {
+    if let Some(dir) = env_path("PERF_EVIDENCE_DIR") {
+        return (resolve_under_root(root, dir), ReportOutputMode::EvidenceDir);
+    }
+
+    let base = env_path("TMPDIR").unwrap_or_else(std::env::temp_dir);
+    (
+        base.join("pi_agent_rust").join("perf_comparison_smoke"),
+        ReportOutputMode::TempSmoke,
+    )
 }
 
 fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> Vec<T> {
@@ -620,6 +659,79 @@ fn build_hypotheses() -> Vec<RegressionHypothesis> {
     ]
 }
 
+fn smoke_rows() -> Vec<ComparisonRow> {
+    vec![ComparisonRow {
+        category: "Smoke".into(),
+        metric: "report writer".into(),
+        rust_value: "1".into(),
+        legacy_value: "1".into(),
+        delta: "0".into(),
+        delta_pct: "0%".into(),
+        verdict: "COMPARABLE".into(),
+    }]
+}
+
+fn build_report(
+    rows: Vec<ComparisonRow>,
+    hypotheses: Vec<RegressionHypothesis>,
+) -> ComparisonReport {
+    let faster = count_verdict(&rows, "FASTER");
+    let slower = count_verdict(&rows, "SLOWER");
+    let comparable = count_verdict(&rows, "COMPARABLE");
+
+    let overall = if slower > faster && slower > comparable {
+        "ACCEPTABLE REGRESSIONS — see analysis below"
+    } else if faster > slower {
+        "NET IMPROVEMENT"
+    } else {
+        "MIXED — see details"
+    };
+
+    ComparisonReport {
+        schema: "pi.ext.perf_comparison.v1".into(),
+        generated_at: now_iso(),
+        summary: ComparisonSummary {
+            faster_count: faster,
+            slower_count: slower,
+            comparable_count: comparable,
+            overall_verdict: overall.into(),
+        },
+        rows,
+        hypotheses,
+    }
+}
+
+fn count_verdict(rows: &[ComparisonRow], verdict: &str) -> u32 {
+    u32::try_from(rows.iter().filter(|row| row.verdict == verdict).count()).unwrap_or(u32::MAX)
+}
+
+fn write_report_outputs(report: &ComparisonReport, report_dir: &Path) {
+    std::fs::create_dir_all(report_dir).expect("create report dir");
+
+    let json = serde_json::to_string_pretty(report).expect("serialize report");
+    std::fs::write(report_dir.join("perf_comparison.json"), &json).expect("write JSON");
+
+    let md = generate_markdown_report(report);
+    std::fs::write(report_dir.join("PERF_COMPARISON.md"), &md).expect("write markdown");
+
+    let mut events = String::new();
+    for row in &report.rows {
+        events.push_str(&serde_json::to_string(row).expect("serialize row"));
+        events.push('\n');
+    }
+    let summary_event = serde_json::json!({
+        "schema": "pi.ext.perf_comparison_summary.v1",
+        "generated_at": report.generated_at,
+        "faster": report.summary.faster_count,
+        "slower": report.summary.slower_count,
+        "comparable": report.summary.comparable_count,
+        "overall_verdict": report.summary.overall_verdict,
+    });
+    events.push_str(&serde_json::to_string(&summary_event).expect("serialize summary"));
+    events.push('\n');
+    std::fs::write(report_dir.join("perf_comparison_events.jsonl"), &events).expect("write JSONL");
+}
+
 fn generate_markdown_report(report: &ComparisonReport) -> String {
     use std::fmt::Write as _;
 
@@ -684,7 +796,7 @@ fn generate_markdown_report(report: &ComparisonReport) -> String {
 
     md.push_str("## How to Regenerate\n\n");
     md.push_str(
-        "```bash\ncargo test --test perf_comparison generate_perf_comparison -- --ignored\n```\n",
+        "```bash\nPERF_EVIDENCE_DIR=tests/perf/reports rch exec -- cargo test --test perf_comparison generate_perf_comparison -- --nocapture\n```\n",
     );
 
     md
@@ -802,15 +914,14 @@ fn test_comparison_rows_from_empty_data() {
     assert!(rows.is_empty(), "No rows from empty data");
 }
 
-/// Generator-style test that writes tracked artifacts under `tests/perf/reports/`.
+/// Report writer smoke test.
 ///
-/// This is intentionally owned by bd-8t27h.12 while it remains `#[ignore]`, so
-/// `cargo test` is deterministic and does not rewrite repository files unless
-/// explicitly requested.
+/// By default this writes temporary smoke artifacts under `TMPDIR`. Set
+/// `PERF_EVIDENCE_DIR` to intentionally refresh checked-in evidence artifacts.
 #[test]
-#[ignore = "bd-8t27h.12: writes tracked perf artifacts under tests/perf/reports"]
-fn generate_perf_comparison() {
+fn generate_perf_comparison() -> Result<(), String> {
     let root = root_dir();
+    let (report_dir, output_mode) = perf_comparison_report_dir(&root);
 
     // Ingest all data sources.
     let legacy: Vec<LegacyBench> =
@@ -824,8 +935,7 @@ fn generate_perf_comparison() {
     let hyperfine_1: Option<HyperfineResult> = read_json(&hyperfine_path(&root, 1));
     let hyperfine_10: Option<HyperfineResult> = read_json(&hyperfine_path(&root, 10));
 
-    // Build comparison.
-    let rows = build_comparison_rows(
+    let mut rows = build_comparison_rows(
         &legacy,
         &rust_workloads,
         load_bench.as_ref(),
@@ -834,71 +944,28 @@ fn generate_perf_comparison() {
         hyperfine_10.as_ref(),
     );
 
-    let hypotheses = build_hypotheses();
-
-    // Tally verdicts.
-    let faster = rows.iter().filter(|r| r.verdict == "FASTER").count() as u32;
-    let slower = rows.iter().filter(|r| r.verdict == "SLOWER").count() as u32;
-    let comparable = rows.iter().filter(|r| r.verdict == "COMPARABLE").count() as u32;
-
-    let overall = if slower > faster && slower > comparable {
-        "ACCEPTABLE REGRESSIONS — see analysis below"
-    } else if faster > slower {
-        "NET IMPROVEMENT"
-    } else {
-        "MIXED — see details"
-    };
-
-    let report = ComparisonReport {
-        schema: "pi.ext.perf_comparison.v1".into(),
-        generated_at: now_iso(),
-        summary: ComparisonSummary {
-            faster_count: faster,
-            slower_count: slower,
-            comparable_count: comparable,
-            overall_verdict: overall.into(),
-        },
-        rows,
-        hypotheses,
-    };
-
-    // Write outputs.
-    let report_dir = root.join("tests/perf/reports");
-    std::fs::create_dir_all(&report_dir).expect("create report dir");
-
-    // JSON
-    let json = serde_json::to_string_pretty(&report).expect("serialize report");
-    std::fs::write(report_dir.join("perf_comparison.json"), &json).expect("write JSON");
-
-    // Markdown
-    let md = generate_markdown_report(&report);
-    std::fs::write(report_dir.join("PERF_COMPARISON.md"), &md).expect("write markdown");
-
-    // JSONL events
-    let mut events = String::new();
-    for row in &report.rows {
-        events.push_str(&serde_json::to_string(row).expect("serialize row"));
-        events.push('\n');
+    if rows.is_empty() {
+        match output_mode {
+            ReportOutputMode::EvidenceDir => {
+                return Err(
+                    "Expected comparison rows for PERF_EVIDENCE_DIR report generation".into(),
+                );
+            }
+            ReportOutputMode::TempSmoke => {
+                rows = smoke_rows();
+            }
+        }
     }
-    // Summary event
-    let summary_event = serde_json::json!({
-        "schema": "pi.ext.perf_comparison_summary.v1",
-        "generated_at": report.generated_at,
-        "faster": report.summary.faster_count,
-        "slower": report.summary.slower_count,
-        "comparable": report.summary.comparable_count,
-        "overall_verdict": report.summary.overall_verdict,
-    });
-    events.push_str(&serde_json::to_string(&summary_event).expect("serialize summary"));
-    events.push('\n');
-    std::fs::write(report_dir.join("perf_comparison_events.jsonl"), &events).expect("write JSONL");
+
+    let report = build_report(rows, build_hypotheses());
+    write_report_outputs(&report, &report_dir);
 
     // Print summary to test output.
     println!("\n=== Performance Comparison Report ===");
-    println!("  Faster:     {faster}");
-    println!("  Comparable: {comparable}");
-    println!("  Slower:     {slower}");
-    println!("  Verdict:    {overall}");
+    println!("  Faster:     {}", report.summary.faster_count);
+    println!("  Comparable: {}", report.summary.comparable_count);
+    println!("  Slower:     {}", report.summary.slower_count);
+    println!("  Verdict:    {}", report.summary.overall_verdict);
     println!("  Reports:");
     println!("    {}", report_dir.join("PERF_COMPARISON.md").display());
     println!("    {}", report_dir.join("perf_comparison.json").display());
@@ -910,10 +977,12 @@ fn generate_perf_comparison() {
     // Assertions: report was generated with data.
     assert!(
         !report.rows.is_empty(),
-        "Expected comparison rows (need benchmark data in target/perf/)"
+        "Expected comparison rows or temp smoke row"
     );
     assert!(
         report.hypotheses.len() >= 4,
         "Expected regression hypotheses"
     );
+
+    Ok(())
 }

@@ -59,18 +59,34 @@ fn project_root() -> PathBuf {
 }
 
 fn report_dir() -> PathBuf {
-    let dir = std::env::var("CARGO_TARGET_DIR").ok().map_or_else(
-        || project_root().join("target"),
-        |raw| {
-            let target_dir = PathBuf::from(raw);
-            if target_dir.is_absolute() {
-                target_dir
-            } else {
-                project_root().join(target_dir)
-            }
-        },
-    );
-    dir.join("perf")
+    if let Some(path) = std::env::var_os("PERF_EVIDENCE_DIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        return if path.is_absolute() {
+            path
+        } else {
+            project_root().join(path)
+        };
+    }
+
+    if let Some(path) = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        let target_dir = if path.is_absolute() {
+            path
+        } else {
+            project_root().join(path)
+        };
+        return target_dir.join("perf");
+    }
+
+    let base = std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("pi_agent_rust").join("event_dispatch_latency")
 }
 
 fn percentile_index(len: usize, numerator: usize, denominator: usize) -> usize {

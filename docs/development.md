@@ -156,6 +156,17 @@ This produces three output files in `tests/ext_conformance/reports/`:
 
 CI uploads conformance logs and reports as downloadable artifacts.
 
+### Performance Report Smoke Tests
+
+Perf/report generators should not rewrite checked-in artifacts during ordinary
+`cargo test` runs. Their smoke-test mode writes under `TMPDIR` by default, while
+intentional evidence refreshes must pass an explicit output root:
+
+```bash
+PERF_EVIDENCE_DIR=tests/perf/reports \
+  rch exec -- cargo test --test perf_comparison generate_perf_comparison -- --nocapture
+```
+
 ### VCR Mode
 
 Provider tests use recorded "cassettes" to avoid network calls and ensure determinism.
