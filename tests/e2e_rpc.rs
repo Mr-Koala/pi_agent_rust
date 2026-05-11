@@ -663,7 +663,9 @@ fn rpc_concurrent_keyless_swarm_e2e_preserves_session_index_and_filesystem_state
         "rpc_concurrent_keyless_swarm_e2e_preserves_session_index_and_filesystem_state",
     );
     let logger = harness.log();
-    let runtime = asupersync::runtime::RuntimeBuilder::current_thread()
+    let runtime = asupersync::runtime::RuntimeBuilder::multi_thread()
+        .blocking_threads(1, 8)
+        .enable_parking(false)
         .build()
         .expect("build test runtime");
     let handle = runtime.handle();
