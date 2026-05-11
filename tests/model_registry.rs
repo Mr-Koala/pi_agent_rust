@@ -141,8 +141,8 @@ fn test_model_fields_populated_correctly() {
 
     assert_eq!(model.model.id, "claude-sonnet-4-5");
     assert_eq!(
-        model.model.name, model.model.id,
-        "upstream snapshot models use the canonical id as their display name"
+        model.model.name, "Claude Sonnet 4.5 (latest)",
+        "built-in registry models should preserve catalog display names"
     );
     assert!(
         model.model.reasoning,

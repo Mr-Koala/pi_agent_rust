@@ -33,6 +33,86 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const DEFAULT_CLI_TIMEOUT_SECS: u64 = 120;
+const FAKE_NPM_SCRIPT: &str = r#"#!/bin/sh
+set -eu
+
+cmd="${1:-}"
+if [ "$cmd" = "root" ] && [ "${2:-}" = "-g" ]; then
+    printf '%s\n' "${npm_config_prefix:-$PWD/.fake-npm-global}/lib/node_modules"
+    exit 0
+fi
+
+if [ "$cmd" = "install" ]; then
+    shift
+    prefix=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --prefix)
+                shift
+                prefix="$1"
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -g|--global)
+                prefix="${npm_config_prefix:-$PWD/.fake-npm-global}"
+                ;;
+        esac
+        shift || true
+    done
+
+    spec="${1:-}"
+    if [ -z "$spec" ]; then
+        exit 0
+    fi
+    if [ -z "$prefix" ]; then
+        prefix="$PWD"
+    fi
+
+    case "$spec" in
+        *@file:*)
+            name="${spec%%@file:*}"
+            src="${spec#*@file:}"
+            ;;
+        file:*)
+            src="${spec#file:}"
+            name="$(basename "$src")"
+            ;;
+        *)
+            name="$spec"
+            src=""
+            ;;
+    esac
+
+    case "$name" in
+        @*/*)
+            scoped="${name#@}"
+            scope="${scoped%%/*}"
+            pkg="${scoped#*/}"
+            dest="$prefix/node_modules/@$scope/$pkg"
+            ;;
+        *)
+            dest="$prefix/node_modules/$name"
+            ;;
+    esac
+
+    mkdir -p "$dest"
+    if [ -n "$src" ]; then
+        cp -R "$src/." "$dest/"
+    else
+        printf '{"name":"%s","version":"0.0.0"}\n' "$name" > "$dest/package.json"
+    fi
+    exit 0
+fi
+
+if [ "$cmd" = "uninstall" ]; then
+    exit 0
+fi
+
+printf 'fake npm unsupported command: %s\n' "$*" >&2
+exit 1
+"#;
 
 struct CliResult {
     exit_code: i32,
@@ -99,6 +179,31 @@ impl CliTestHarness {
             "npm_config_prefix".to_string(),
             env_root.join("npm-prefix").display().to_string(),
         );
+
+        #[cfg(unix)]
+        {
+            let fake_bin = env_root.join("fake-bin");
+            let _ = fs::create_dir_all(&fake_bin);
+            let fake_npm = fake_bin.join("npm");
+            fs::write(&fake_npm, FAKE_NPM_SCRIPT).expect("write fake npm");
+            let mut permissions = fs::metadata(&fake_npm)
+                .expect("stat fake npm")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&fake_npm, permissions).expect("chmod fake npm");
+
+            let mut paths = vec![fake_bin];
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                paths.extend(std::env::split_paths(&existing_path));
+            }
+            env.insert(
+                "PATH".to_string(),
+                std::env::join_paths(paths)
+                    .expect("join fake npm PATH")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
 
         Self {
             harness,

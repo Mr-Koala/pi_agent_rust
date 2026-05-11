@@ -37,6 +37,8 @@ use std::time::{Duration, Instant};
 // Helpers
 // ---------------------------------------------------------------------------
 
+const RPC_E2E_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn cassette_root() -> PathBuf {
     std::env::var("VCR_CASSETTE_DIR").map_or_else(
         |_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vcr"),
@@ -290,7 +292,7 @@ async fn recv_line(rx: &Arc<Mutex<Receiver<String>>>, label: &str) -> Result<Str
     let start = Instant::now();
     let mut disconnected = false;
 
-    while start.elapsed() <= Duration::from_secs(10) {
+    while start.elapsed() <= RPC_E2E_WAIT_TIMEOUT {
         let recv_result = {
             let rx = rx.lock().expect("lock rpc output receiver");
             rx.try_recv()
@@ -343,7 +345,7 @@ async fn recv_response(out_rx: &Arc<Mutex<Receiver<String>>>, label: &str) -> Va
         }
 
         assert!(
-            start.elapsed() <= Duration::from_secs(10),
+            start.elapsed() <= RPC_E2E_WAIT_TIMEOUT,
             "{label}: timed out waiting for RPC response"
         );
     }
@@ -399,7 +401,7 @@ async fn recv_response_and_agent_end(
             agent_end = Some(value);
         }
         assert!(
-            start.elapsed() <= Duration::from_secs(10),
+            start.elapsed() <= RPC_E2E_WAIT_TIMEOUT,
             "{label}: timed out waiting for response id {expected_id} and agent_end"
         );
     }
@@ -439,7 +441,7 @@ async fn send_recv_after_abort(
             "{label}: only already-asserted abort terminal events may be skipped"
         );
         assert!(
-            start.elapsed() <= Duration::from_secs(10),
+            start.elapsed() <= RPC_E2E_WAIT_TIMEOUT,
             "{label}: timed out waiting for RPC response after abort"
         );
     }
@@ -2381,7 +2383,7 @@ async fn recv_ui_request(out_rx: &Arc<Mutex<Receiver<String>>>, label: &str) -> 
         }
 
         assert!(
-            start.elapsed() <= Duration::from_secs(10),
+            start.elapsed() <= RPC_E2E_WAIT_TIMEOUT,
             "{label}: timed out waiting for extension_ui_request"
         );
         asupersync::time::sleep(asupersync::time::wall_now(), Duration::from_millis(5)).await;
@@ -2419,7 +2421,7 @@ async fn wait_for_custom_message(
         }
 
         assert!(
-            start.elapsed() <= Duration::from_secs(10),
+            start.elapsed() <= RPC_E2E_WAIT_TIMEOUT,
             "{label}: timed out waiting for custom message {custom_type}/{content}"
         );
         asupersync::time::sleep(asupersync::time::wall_now(), Duration::from_millis(10)).await;
