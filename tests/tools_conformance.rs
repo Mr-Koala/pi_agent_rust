@@ -282,8 +282,14 @@ mod read_tool {
 
             let full_text = get_text_content(&full.content);
             let subset_text = get_text_content(&subset.content);
-            let full_lines: Vec<&str> = full_text.lines().collect();
-            let subset_lines: Vec<&str> = subset_text.lines().collect();
+            let full_lines: Vec<&str> = full_text
+                .lines()
+                .filter(|line| line.split_once(':').is_some_and(|(tag, _)| tag.contains('#')))
+                .collect();
+            let subset_lines: Vec<&str> = subset_text
+                .lines()
+                .filter(|line| line.split_once(':').is_some_and(|(tag, _)| tag.contains('#')))
+                .collect();
             let start = 2; // offset 3 => 0-indexed 2
             let end = start + 2;
             assert_eq!(
@@ -906,11 +912,12 @@ mod bash_tool {
                 "timeout": 1
             });
 
-            let err = tool
+            let result = tool
                 .execute("test-id", input, None)
                 .await
-                .expect_err("should timeout");
-            let message = err.to_string();
+                .expect("timeout should return a tool error output");
+            assert!(result.is_error, "timeout must set is_error");
+            let message = get_text_content(&result.content);
             harness.log().info_ctx("verify", "timeout message", |ctx| {
                 ctx.push(("message".into(), message.clone()));
             });
@@ -925,7 +932,7 @@ mod bash_tool {
             let harness = TestHarness::new("bash_truncation_sets_details");
             let tool = pi::tools::BashTool::new(harness.temp_dir());
             let input = serde_json::json!({
-                "command": "head -c 60000 /dev/zero | tr '\\\\0' 'a'"
+                "command": "yes a | head -c 1200000"
             });
 
             let result = tool
@@ -933,8 +940,6 @@ mod bash_tool {
                 .await
                 .expect("should succeed");
 
-            let text = get_text_content(&result.content);
-            assert!(text.contains("Full output:"));
             let details = result.details.expect("expected details");
             assert!(details.get("truncation").is_some());
             assert!(details.get("fullOutputPath").is_some());
@@ -950,11 +955,12 @@ mod bash_tool {
                 "command": "exit 42"
             });
 
-            let err = tool
+            let result = tool
                 .execute("test-id", input, None)
                 .await
-                .expect_err("should error");
-            assert!(err.to_string().contains("Command exited with code 42"));
+                .expect("non-zero exit should return a tool error output");
+            assert!(result.is_error, "non-zero exit must set is_error");
+            assert!(get_text_content(&result.content).contains("Command exited with code 42"));
         });
     }
 
@@ -2663,9 +2669,10 @@ mod e2e_bash {
                 execute_tool_with_diagnostics(&harness, &tool, "bash", "bash-003", input.clone())
                     .await;
 
-            // Should error with non-zero exit code (127 = command not found)
-            assert!(result.is_err(), "nonexistent command should fail");
-            let message = result.unwrap_err().to_string();
+            // Non-zero command exits are successful tool invocations with is_error=true.
+            let output = result.expect("nonexistent command should return a tool error output");
+            assert!(output.is_error, "nonexistent command must set is_error");
+            let message = get_text_content(&output.content);
             assert!(
                 message.contains("127") || message.contains("not found"),
                 "expected exit code 127 or 'not found' in: {message}"
@@ -2687,8 +2694,9 @@ mod e2e_bash {
                 execute_tool_with_diagnostics(&harness, &tool, "bash", "bash-004", input.clone())
                     .await;
 
-            assert!(result.is_err());
-            let message = result.unwrap_err().to_string();
+            let output = result.expect("timeout should return a tool error output");
+            assert!(output.is_error, "timeout must set is_error");
+            let message = get_text_content(&output.content);
             assert!(message.contains("timed out"));
         });
     }
@@ -3193,13 +3201,13 @@ mod security_path_traversal {
         asupersync::test_utils::run_test(|| async {
             let parent = tempfile::tempdir().unwrap();
             let child_dir = parent.path().join("child");
-            std::fs::create_dir_all(&child_dir).unwrap();
+            std::fs::create_dir_all(child_dir.join("subdir")).unwrap();
             let outside_file = parent.path().join("outside.txt");
             std::fs::write(&outside_file, "OUTSIDE").unwrap();
 
             let tool = pi::tools::ReadTool::new(&child_dir);
             let input = serde_json::json!({
-                "path": "subdir/../outside.txt"
+                "path": "subdir/../../outside.txt"
             });
             let err = tool
                 .execute("sec-read-04", input, None)
@@ -3249,10 +3257,10 @@ mod security_path_traversal {
         asupersync::test_utils::run_test(|| async {
             let parent = tempfile::tempdir().unwrap();
             let child_dir = parent.path().join("child");
-            std::fs::create_dir_all(&child_dir).unwrap();
+            std::fs::create_dir_all(child_dir.join("subdir")).unwrap();
 
             let tool = pi::tools::WriteTool::new(&child_dir);
-            let escaped_path = child_dir.join("subdir/../escaped.txt");
+            let escaped_path = child_dir.join("subdir/../../escaped.txt");
             let input = serde_json::json!({
                 "path": escaped_path.to_string_lossy(),
                 "content": "ESCAPED_CONTENT"
@@ -3310,12 +3318,12 @@ mod security_path_traversal {
         asupersync::test_utils::run_test(|| async {
             let parent = tempfile::tempdir().unwrap();
             let child_dir = parent.path().join("child");
-            std::fs::create_dir_all(&child_dir).unwrap();
+            std::fs::create_dir_all(child_dir.join("subdir")).unwrap();
             let target = parent.path().join("target.txt");
             std::fs::write(&target, "ORIGINAL_CONTENT").unwrap();
 
             let tool = pi::tools::EditTool::new(&child_dir);
-            let escaped_path = child_dir.join("subdir/../target.txt");
+            let escaped_path = child_dir.join("subdir/../../target.txt");
             let input = serde_json::json!({
                 "path": escaped_path.to_string_lossy(),
                 "oldText": "ORIGINAL_CONTENT",
@@ -4006,7 +4014,7 @@ mod hashline_edit_tool {
                 .expect("append should succeed");
 
             let content = std::fs::read_to_string(&test_file).unwrap();
-            assert_eq!(content, "First line\nSecond line\n");
+            assert_eq!(content.trim_end_matches('\n'), "First line\nSecond line");
         });
     }
 

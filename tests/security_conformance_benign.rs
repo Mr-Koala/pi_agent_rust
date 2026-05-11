@@ -819,13 +819,14 @@ fn compat_regression_detection() {
 
 #[test]
 fn security_gate_waiver_required_fields() {
+    let (created, expires) = waiver_dates_relative_to_today(-14, 14);
     let valid_waiver = SecurityGateWaiver {
         gate_id: "security_compat".to_string(),
         owner: "TestAgent".to_string(),
         bead: "bd-test".to_string(),
         reason: "Testing waiver validation".to_string(),
-        created: "2026-02-14".to_string(),
-        expires: "2026-02-28".to_string(),
+        created,
+        expires,
         scope: "full".to_string(),
         remove_when: "Tests pass consistently for 3 runs".to_string(),
     };
@@ -840,13 +841,14 @@ fn security_gate_waiver_required_fields() {
 
 #[test]
 fn security_gate_waiver_rejects_missing_owner() {
+    let (created, expires) = waiver_dates_relative_to_today(-14, 14);
     let waiver = SecurityGateWaiver {
         gate_id: "security_compat".to_string(),
         owner: String::new(),
         bead: "bd-test".to_string(),
         reason: "Testing".to_string(),
-        created: "2026-02-14".to_string(),
-        expires: "2026-02-28".to_string(),
+        created,
+        expires,
         scope: "full".to_string(),
         remove_when: "Tests pass".to_string(),
     };
@@ -857,13 +859,14 @@ fn security_gate_waiver_rejects_missing_owner() {
 
 #[test]
 fn security_gate_waiver_rejects_expired() {
+    let (created, expires) = waiver_dates_relative_to_today(-30, -15);
     let waiver = SecurityGateWaiver {
         gate_id: "security_compat".to_string(),
         owner: "TestAgent".to_string(),
         bead: "bd-test".to_string(),
         reason: "Testing".to_string(),
-        created: "2026-01-01".to_string(),
-        expires: "2026-01-15".to_string(),
+        created,
+        expires,
         scope: "full".to_string(),
         remove_when: "Tests pass".to_string(),
     };
@@ -882,13 +885,14 @@ fn security_gate_waiver_rejects_expired() {
 
 #[test]
 fn security_gate_waiver_rejects_too_long_duration() {
+    let (created, expires) = waiver_dates_relative_to_today(1, 60);
     let waiver = SecurityGateWaiver {
         gate_id: "security_compat".to_string(),
         owner: "TestAgent".to_string(),
         bead: "bd-test".to_string(),
         reason: "Testing".to_string(),
-        created: "2026-02-01".to_string(),
-        expires: "2026-04-01".to_string(), // 59 days > 30 max
+        created,
+        expires,
         scope: "full".to_string(),
         remove_when: "Tests pass".to_string(),
     };
@@ -907,13 +911,14 @@ fn security_gate_waiver_rejects_too_long_duration() {
 
 #[test]
 fn security_gate_waiver_rejects_invalid_scope() {
+    let (created, expires) = waiver_dates_relative_to_today(-14, 14);
     let waiver = SecurityGateWaiver {
         gate_id: "security_compat".to_string(),
         owner: "TestAgent".to_string(),
         bead: "bd-test".to_string(),
         reason: "Testing".to_string(),
-        created: "2026-02-14".to_string(),
-        expires: "2026-02-28".to_string(),
+        created,
+        expires,
         scope: "invalid_scope".to_string(),
         remove_when: "Tests pass".to_string(),
     };
@@ -928,13 +933,14 @@ fn security_gate_waiver_rejects_invalid_scope() {
 
 #[test]
 fn security_gate_waiver_rejects_missing_bead() {
+    let (created, expires) = waiver_dates_relative_to_today(-14, 14);
     let waiver = SecurityGateWaiver {
         gate_id: "security_compat".to_string(),
         owner: "TestAgent".to_string(),
         bead: String::new(),
         reason: "Testing".to_string(),
-        created: "2026-02-14".to_string(),
-        expires: "2026-02-28".to_string(),
+        created,
+        expires,
         scope: "full".to_string(),
         remove_when: "Tests pass".to_string(),
     };
@@ -949,6 +955,18 @@ fn security_gate_waiver_rejects_missing_bead() {
 
 const WAIVER_MAX_DURATION_DAYS: i64 = 30;
 const WAIVER_VALID_SCOPES: &[&str] = &["full", "preflight", "both"];
+
+fn waiver_dates_relative_to_today(created_offset_days: i64, expires_offset_days: i64) -> (String, String) {
+    let today = chrono::Utc::now().date_naive();
+    (
+        format_waiver_date(today + chrono::Duration::days(created_offset_days)),
+        format_waiver_date(today + chrono::Duration::days(expires_offset_days)),
+    )
+}
+
+fn format_waiver_date(date: chrono::NaiveDate) -> String {
+    date.format("%Y-%m-%d").to_string()
+}
 
 fn validate_security_waiver(waiver: &SecurityGateWaiver) -> WaiverValidation {
     // Check required fields are non-empty
