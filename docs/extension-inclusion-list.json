@@ -1,6 +1,6 @@
 {
   "schema": "pi.ext.inclusion_list.v1",
-  "generated_at": "2026-05-01T16:07:00.073820267+00:00",
+  "generated_at": "2026-05-11T00:02:12.088808964+00:00",
   "summary": {
     "tier1_count": 184,
     "tier1_review_count": 24,
@@ -51,7 +51,7 @@
         "ui_header"
       ],
       "category": "tool",
-      "risk_level": "minimal",
+      "risk_level": "low",
       "inclusion_rationale": "Official pi-mono extension (MIT license, score=60); canonical reference for conformance"
     },
     {
@@ -73,7 +73,7 @@
         "export_default"
       ],
       "category": "exec",
-      "risk_level": "minimal",
+      "risk_level": "low",
       "inclusion_rationale": "Official pi-mono extension (MIT license, score=60); canonical reference for conformance"
     },
     {
@@ -95,7 +95,7 @@
         "registerTool"
       ],
       "category": "tool",
-      "risk_level": "minimal",
+      "risk_level": "low",
       "inclusion_rationale": "Official pi-mono extension (MIT license, score=60); canonical reference for conformance"
     },
     {
@@ -704,7 +704,7 @@
       "source_tier": "community",
       "license": "MIT",
       "provenance": {
-        "checksum_sha256": "c3589f0daacbf63f54da18e4483efc8d93d98e5ed65fd9f5fd1c6a27db5a53cc",
+        "checksum_sha256": "3977f4fdb71832fd9378ce0b6c4513d8395c06a432d941f43c1572ed77440baa",
         "source_type": "git",
         "source_repo": "https://github.com/badlogic/pi-mono",
         "source_path": "packages/coding-agent/community/nicobailon/index.ts"
@@ -3669,7 +3669,7 @@
         "ui_header"
       ],
       "category": "provider",
-      "risk_level": "low",
+      "risk_level": "minimal",
       "inclusion_rationale": "Third-party GitHub extension (MIT license, score=38); exercises diverse coding patterns"
     },
     {
@@ -3700,7 +3700,7 @@
       "license": "MIT",
       "score": 38.0,
       "provenance": {
-        "checksum_sha256": "3ae6c9a2c50ec4cfa38ee50a8cecde77ea40683b90cdb8b741bbca7c19093857",
+        "checksum_sha256": "e320494cd06919d6fd0caf0371805f353d24b7d6bd74dc2e48cb74a241f98098",
         "source_type": "url"
       },
       "capabilities": [
@@ -3739,7 +3739,7 @@
         "ui_header"
       ],
       "category": "tool",
-      "risk_level": "low",
+      "risk_level": "minimal",
       "inclusion_rationale": "Third-party GitHub extension (MIT license, score=38); exercises diverse coding patterns"
     },
     {
@@ -3750,7 +3750,7 @@
       "license": "MIT",
       "score": 23.0,
       "provenance": {
-        "checksum_sha256": "8deb3029e326eb4eccc713c4de1214876125edf834eef5da2bb9135f1b6bb17e",
+        "checksum_sha256": "4659a06686ba04a53360afb7b65d5e83869a73613bb6116dea06f98dc94b3e7a",
         "source_type": "url"
       },
       "capabilities": [
@@ -3767,7 +3767,7 @@
         "ui_overlay"
       ],
       "category": "tool",
-      "risk_level": "low",
+      "risk_level": "minimal",
       "inclusion_rationale": "Third-party GitHub extension (MIT license, score=23); exercises diverse coding patterns"
     },
     {

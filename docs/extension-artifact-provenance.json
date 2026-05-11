@@ -502,7 +502,7 @@
       "directory": "community/nicobailon-interview-tool",
       "retrieved": "2026-02-05",
       "checksum": {
-        "sha256": "c3589f0daacbf63f54da18e4483efc8d93d98e5ed65fd9f5fd1c6a27db5a53cc"
+        "sha256": "3977f4fdb71832fd9378ce0b6c4513d8395c06a432d941f43c1572ed77440baa"
       },
       "name": "nicobailon-interview-tool",
       "license": "MIT",
@@ -2882,7 +2882,7 @@
       "directory": "third-party/kcosr-pi-extensions",
       "retrieved": "2026-02-05",
       "checksum": {
-        "sha256": "3ae6c9a2c50ec4cfa38ee50a8cecde77ea40683b90cdb8b741bbca7c19093857"
+        "sha256": "e320494cd06919d6fd0caf0371805f353d24b7d6bd74dc2e48cb74a241f98098"
       },
       "name": "kcosr-pi-extensions",
       "license": "MIT",
@@ -3078,7 +3078,7 @@
       "directory": "third-party/w-winter-dot314",
       "retrieved": "2026-02-05",
       "checksum": {
-        "sha256": "8deb3029e326eb4eccc713c4de1214876125edf834eef5da2bb9135f1b6bb17e"
+        "sha256": "4659a06686ba04a53360afb7b65d5e83869a73613bb6116dea06f98dc94b3e7a"
       },
       "name": "w-winter-dot314",
       "license": "MIT",

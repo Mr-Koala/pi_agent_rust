@@ -1401,7 +1401,7 @@
         "ui_header"
       ],
       "file_count": 4,
-      "checksum": "c3589f0daacbf63f54da18e4483efc8d93d98e5ed65fd9f5fd1c6a27db5a53cc"
+      "checksum": "3977f4fdb71832fd9378ce0b6c4513d8395c06a432d941f43c1572ed77440baa"
     },
     {
       "id": "community/nicobailon-mcp-adapter",
@@ -2371,7 +2371,7 @@
         "ui_overlay"
       ],
       "file_count": 46,
-      "checksum": "3ae6c9a2c50ec4cfa38ee50a8cecde77ea40683b90cdb8b741bbca7c19093857"
+      "checksum": "e320494cd06919d6fd0caf0371805f353d24b7d6bd74dc2e48cb74a241f98098"
     },
     {
       "id": "third-party/limouren-agent-things",
@@ -2776,7 +2776,7 @@
         "ui_overlay"
       ],
       "file_count": 77,
-      "checksum": "8deb3029e326eb4eccc713c4de1214876125edf834eef5da2bb9135f1b6bb17e"
+      "checksum": "4659a06686ba04a53360afb7b65d5e83869a73613bb6116dea06f98dc94b3e7a"
     },
     {
       "id": "third-party/zenobi-us-pi-dcp",

@@ -32,8 +32,8 @@ codex-clippy/
 codex-clippy/**
 .rch-tmp/
 .rch-tmp/**
-artifacts/
-artifacts/**
+/artifacts/
+/artifacts/**
 legacy_pi_mono_code/
 legacy_pi_mono_code/**
 proptest-regressions/

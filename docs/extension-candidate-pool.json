@@ -1291,7 +1291,7 @@
       "retrieved": "2026-02-05",
       "artifact_path": "tests/ext_conformance/artifacts/community/nicobailon-interview-tool",
       "checksum": {
-        "sha256": "c3589f0daacbf63f54da18e4483efc8d93d98e5ed65fd9f5fd1c6a27db5a53cc"
+        "sha256": "3977f4fdb71832fd9378ce0b6c4513d8395c06a432d941f43c1572ed77440baa"
       },
       "source": {
         "type": "git",
