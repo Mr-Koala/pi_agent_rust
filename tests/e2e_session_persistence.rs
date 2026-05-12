@@ -24,10 +24,14 @@ use pi::model::{
 use pi::provider::{Context, Provider, StreamOptions};
 #[cfg(unix)]
 use pi::session::encode_cwd;
-use pi::session::{Session, SessionEntry, SessionMessage, SessionStoreKind};
+use pi::session::{
+    Session, SessionEntry, SessionMessage, SessionStoreKind, create_v2_sidecar_from_jsonl,
+    migration_status,
+};
 use pi::session_index::SessionIndex;
+use pi::session_store_v2::SessionStoreV2;
 use pi::tools::ToolRegistry;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -169,6 +173,33 @@ struct CliResult {
     duration: Duration,
 }
 
+const SESSION_STORE_CHAOS_HARNESS_SCHEMA: &str = "pi.session.store_chaos_harness.v1";
+const SESSION_STORE_CHAOS_WORKER_SCHEMA: &str = "pi.session.store_chaos_worker.v1";
+
+#[derive(Debug, Clone)]
+struct SessionChaosWorkerSpec {
+    id: &'static str,
+    backend: &'static str,
+    inject: &'static str,
+}
+
+#[derive(Debug)]
+struct SpawnedSessionChaosChild {
+    worker_id: String,
+    started_at: Instant,
+    child: std::process::Child,
+    stdout_handle: std::thread::JoinHandle<Vec<u8>>,
+    stderr_handle: std::thread::JoinHandle<Vec<u8>>,
+}
+
+#[derive(Debug)]
+struct SessionChaosChildResult {
+    worker_id: String,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
 fn cli_binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_pi"))
 }
@@ -301,6 +332,106 @@ fn run_cli(
     }
 }
 
+fn chaos_worker_summary_path(artifact_dir: &Path, worker_id: &str) -> PathBuf {
+    artifact_dir.join(format!("worker-{worker_id}.summary.json"))
+}
+
+fn spawn_session_store_chaos_child(
+    current_exe: &Path,
+    sessions_root: &Path,
+    artifact_dir: &Path,
+    worker_cwd: &Path,
+    spec: &SessionChaosWorkerSpec,
+) -> SpawnedSessionChaosChild {
+    let mut command = Command::new(current_exe);
+    command
+        .arg("--exact")
+        .arg("session_store_chaos_worker_process_entrypoint")
+        .arg("--nocapture")
+        .env("PI_SESSION_STORE_CHAOS_WORKER", "1")
+        .env("PI_SESSION_STORE_CHAOS_WORKER_ID", spec.id)
+        .env("PI_SESSION_STORE_CHAOS_BACKEND", spec.backend)
+        .env("PI_SESSION_STORE_CHAOS_INJECT", spec.inject)
+        .env("PI_SESSION_STORE_CHAOS_ROOT", sessions_root)
+        .env("PI_SESSION_STORE_CHAOS_ARTIFACT_DIR", artifact_dir)
+        .current_dir(worker_cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn().expect("spawn session chaos child");
+    let mut child_stdout = child.stdout.take().expect("child stdout piped");
+    let mut child_stderr = child.stderr.take().expect("child stderr piped");
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut child_stdout, &mut buf);
+        buf
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut child_stderr, &mut buf);
+        buf
+    });
+
+    let started_at = Instant::now();
+
+    SpawnedSessionChaosChild {
+        worker_id: spec.id.to_string(),
+        started_at,
+        child,
+        stdout_handle,
+        stderr_handle,
+    }
+}
+
+fn wait_session_store_chaos_child(
+    mut spawned: SpawnedSessionChaosChild,
+    timeout: Duration,
+) -> SessionChaosChildResult {
+    let mut timed_out = false;
+    let mut wait_failed = false;
+    let status = loop {
+        match spawned.child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(_) => {
+                wait_failed = true;
+                let _ = spawned.child.kill();
+                let _ = spawned.child.wait();
+                break None;
+            }
+        }
+
+        if spawned.started_at.elapsed() > timeout {
+            timed_out = true;
+            let _ = spawned.child.kill();
+            break spawned.child.wait().ok();
+        }
+
+        std::thread::sleep(Duration::from_millis(25));
+    };
+
+    let stdout =
+        String::from_utf8_lossy(&spawned.stdout_handle.join().unwrap_or_default()).to_string();
+    let mut stderr =
+        String::from_utf8_lossy(&spawned.stderr_handle.join().unwrap_or_default()).to_string();
+    let exit_code = if wait_failed {
+        -1
+    } else if timed_out {
+        stderr = format!("ERROR: timed out after {timeout:?}\n{stderr}");
+        -1
+    } else {
+        status.and_then(|status| status.code()).unwrap_or(-1)
+    };
+
+    SessionChaosChildResult {
+        worker_id: spawned.worker_id,
+        exit_code,
+        stdout,
+        stderr,
+    }
+}
+
 fn assert_contains(harness: &TestHarness, haystack: &str, needle: &str) {
     harness.assert_log(format!("assert contains: {needle}").as_str());
     assert!(
@@ -420,6 +551,455 @@ fn assert_no_duplicate_user_texts(user_texts: &[String], context: &str) {
         user_texts.len(),
         "duplicate user text detected in {context}"
     );
+}
+
+fn string_array_field(value: &Value, field: &str) -> Vec<String> {
+    let Some(items) = value.get(field).and_then(Value::as_array) else {
+        return vec![format!("__missing_array_field_{field}__")];
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .unwrap_or("__non_string_array_item__")
+                .to_string()
+        })
+        .collect()
+}
+
+fn required_chaos_env(name: &str) -> String {
+    let Ok(value) = std::env::var(name) else {
+        std::process::exit(2);
+    };
+    value
+}
+
+#[test]
+fn session_store_chaos_worker_process_entrypoint() {
+    if std::env::var_os("PI_SESSION_STORE_CHAOS_WORKER").is_none() {
+        return;
+    }
+
+    run_session_store_chaos_worker_from_env();
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_session_store_chaos_worker_from_env() {
+    let worker_id = required_chaos_env("PI_SESSION_STORE_CHAOS_WORKER_ID");
+    let backend = required_chaos_env("PI_SESSION_STORE_CHAOS_BACKEND");
+    let inject = required_chaos_env("PI_SESSION_STORE_CHAOS_INJECT");
+    let sessions_root = PathBuf::from(required_chaos_env("PI_SESSION_STORE_CHAOS_ROOT"));
+    let artifact_dir = PathBuf::from(required_chaos_env("PI_SESSION_STORE_CHAOS_ARTIFACT_DIR"));
+    std::fs::create_dir_all(&sessions_root).expect("create chaos sessions root");
+    std::fs::create_dir_all(&artifact_dir).expect("create chaos artifact dir");
+
+    let summary_path = chaos_worker_summary_path(&artifact_dir, &worker_id);
+    let rollback_root = artifact_dir.join(format!("worker-{worker_id}.rollback.v2"));
+
+    run_async_test(async {
+        let store_kind = match backend.as_str() {
+            "jsonl" | "v2" => SessionStoreKind::Jsonl,
+            #[cfg(feature = "sqlite-sessions")]
+            "sqlite" => SessionStoreKind::Sqlite,
+            _ => std::process::exit(2),
+        };
+
+        let mut session =
+            Session::create_with_dir_and_store(Some(sessions_root.clone()), store_kind);
+        session.append_session_info(Some(format!("chaos worker {worker_id}")));
+        let base_text = format!("{worker_id}:base");
+        let first_entry_id = session.append_message(SessionMessage::User {
+            content: UserContent::Text(base_text.clone()),
+            timestamp: Some(0),
+        });
+        session.save().await.expect("save chaos worker baseline");
+        let session_path = session.path.clone().expect("chaos worker session path");
+
+        let turn_texts = [
+            (0_i64, format!("{worker_id}:turn-0")),
+            (1_i64, format!("{worker_id}:turn-1")),
+            (2_i64, format!("{worker_id}:turn-2")),
+        ];
+        let mut expected_user_texts = vec![base_text];
+        expected_user_texts.extend(turn_texts.iter().map(|(_, text)| text.clone()));
+        for (timestamp, text) in turn_texts {
+            session.append_message(SessionMessage::User {
+                content: UserContent::Text(text),
+                timestamp: Some(timestamp),
+            });
+            session.save().await.expect("save chaos worker turn");
+        }
+
+        if matches!(inject.as_str(), "compaction") {
+            session.append_compaction(
+                format!("chaos compaction {worker_id}"),
+                first_entry_id.clone(),
+                128,
+                Some(json!({
+                    "schema": "pi.session.store_chaos_compaction_fixture.v1",
+                    "workerId": worker_id,
+                })),
+                Some(false),
+            );
+            session.save().await.expect("save chaos compaction marker");
+        }
+
+        let mut corruption_fixture_path = None;
+        let mut corruption_skipped_entries = 0usize;
+        if matches!(inject.as_str(), "corrupt_tail") {
+            let fixture_path = artifact_dir.join(format!("worker-{worker_id}.corrupt-tail.jsonl"));
+            std::fs::copy(&session_path, &fixture_path).expect("copy corrupt-tail fixture");
+            let mut fixture = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&fixture_path)
+                .expect("open corrupt-tail fixture");
+            fixture
+                .write_all(b"{ this is not valid session json }\n")
+                .expect("append corrupt-tail fixture line");
+            let (fixture_session, fixture_diagnostics) =
+                Session::open_with_diagnostics(fixture_path.to_string_lossy().as_ref())
+                    .await
+                    .expect("open corrupt-tail fixture");
+            corruption_skipped_entries = fixture_diagnostics.skipped_entries.len();
+            assert_eq!(corruption_skipped_entries, 1);
+            let fixture_texts =
+                user_texts_in_order(&fixture_session.to_messages_for_current_path());
+            for expected in &expected_user_texts {
+                assert!(
+                    fixture_texts.contains(expected),
+                    "corrupt-tail fixture dropped expected text {expected}"
+                );
+            }
+            corruption_fixture_path = Some(fixture_path.display().to_string());
+        }
+
+        let (v2_index_recovered, v2_stale_jsonl_recovered, rollback_outcome) = match backend
+            .as_str()
+        {
+            "v2" => {
+                let sidecar = create_v2_sidecar_from_jsonl(&session_path)
+                    .expect("create chaos V2 sidecar from JSONL");
+                sidecar.validate_integrity().expect("V2 sidecar integrity");
+                let mut index_file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(sidecar.index_file_path())
+                    .expect("open V2 index for fault injection");
+                index_file
+                    .write_all(b"{ this is not valid v2 index json }\n")
+                    .expect("append V2 index corruption");
+
+                let (recovered_from_v2, diagnostics) =
+                    Session::open_with_diagnostics(session_path.to_string_lossy().as_ref())
+                        .await
+                        .expect("open after V2 index fault");
+                assert!(
+                    diagnostics.skipped_entries.is_empty(),
+                    "V2 index rebuild should not drop session entries"
+                );
+
+                std::thread::sleep(Duration::from_millis(20));
+                let mut stale_jsonl = recovered_from_v2;
+                let stale_text = format!("{worker_id}:jsonl-after-sidecar");
+                stale_jsonl.append_message(SessionMessage::User {
+                    content: UserContent::Text(stale_text.clone()),
+                    timestamp: Some(0),
+                });
+                expected_user_texts.push(stale_text);
+                stale_jsonl
+                    .save()
+                    .await
+                    .expect("save stale JSONL after V2 sidecar");
+
+                let (loaded_after_stale, stale_diagnostics) =
+                    Session::open_with_diagnostics(session_path.to_string_lossy().as_ref())
+                        .await
+                        .expect("open stale JSONL after V2 sidecar");
+                assert!(
+                    stale_diagnostics.skipped_entries.is_empty(),
+                    "stale V2 fallback should not report JSONL entry loss"
+                );
+                let stale_texts =
+                    user_texts_in_order(&loaded_after_stale.to_messages_for_current_path());
+                for expected in &expected_user_texts {
+                    assert!(
+                        stale_texts.contains(expected),
+                        "stale V2 fallback dropped expected text {expected}"
+                    );
+                }
+
+                let mut rollback_store = SessionStoreV2::create(&rollback_root, 64 * 1024 * 1024)
+                    .expect("create rollback sidecar");
+                rollback_store
+                    .append_entry(
+                        format!("{worker_id}-rollback-base"),
+                        None,
+                        "message",
+                        json!({"workerId": worker_id, "text": "rollback-base"}),
+                    )
+                    .expect("append rollback base");
+                rollback_store
+                    .create_checkpoint(1, "chaos-baseline")
+                    .expect("create rollback checkpoint");
+                rollback_store
+                    .append_entry(
+                        format!("{worker_id}-rollback-extra"),
+                        Some(format!("{worker_id}-rollback-base")),
+                        "message",
+                        json!({"workerId": worker_id, "text": "rollback-extra"}),
+                    )
+                    .expect("append rollback extra");
+                let event = rollback_store
+                    .rollback_to_checkpoint(
+                        1,
+                        format!("{worker_id}-rollback-migration"),
+                        format!("{worker_id}-rollback-correlation"),
+                    )
+                    .expect("rollback V2 checkpoint");
+                assert_eq!(rollback_store.entry_count(), 1);
+                rollback_store
+                    .validate_integrity()
+                    .expect("rollback store integrity");
+                (true, true, Some(event.outcome))
+            }
+            _ => (false, false, None),
+        };
+
+        let (loaded, diagnostics) =
+            Session::open_with_diagnostics(session_path.to_string_lossy().as_ref())
+                .await
+                .expect("reopen chaos worker session");
+        let observed_user_texts = user_texts_in_order(&loaded.to_messages_for_current_path());
+        for expected in &expected_user_texts {
+            assert!(
+                observed_user_texts.contains(expected),
+                "chaos worker {worker_id} dropped expected text {expected}"
+            );
+        }
+        assert_no_duplicate_user_texts(&observed_user_texts, &format!("chaos worker {worker_id}"));
+
+        let index = SessionIndex::for_sessions_root(&sessions_root);
+        index
+            .reindex_all()
+            .expect("worker session index refresh after chaos writes");
+        let indexed_count = index
+            .list_sessions(None)
+            .expect("worker list indexed sessions")
+            .len();
+
+        std::fs::write(
+            &summary_path,
+            serde_json::to_string_pretty(&json!({
+                "schema": SESSION_STORE_CHAOS_WORKER_SCHEMA,
+                "workerId": worker_id,
+                "backend": backend,
+                "inject": inject,
+                "sessionPath": session_path.display().to_string(),
+                "expectedUserTexts": expected_user_texts,
+                "observedUserTexts": observed_user_texts,
+                "openDiagnostics": {
+                    "skippedEntries": diagnostics.skipped_entries.len(),
+                    "orphanedParentLinks": diagnostics.orphaned_parent_links.len(),
+                },
+                "indexRowsSeenByWorker": indexed_count,
+                "corruptionFixturePath": corruption_fixture_path,
+                "corruptionSkippedEntries": corruption_skipped_entries,
+                "v2": {
+                    "indexRecovered": v2_index_recovered,
+                    "staleJsonlRecovered": v2_stale_jsonl_recovered,
+                    "migrationStateAfterChaos": format!("{:?}", migration_status(&session_path)),
+                    "rollbackOutcome": rollback_outcome,
+                }
+            }))
+            .expect("serialize chaos worker summary"),
+        )
+        .expect("write chaos worker summary");
+    });
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn session_store_chaos_harness_concurrent_workers_recover_consistently() {
+    let test_name = "e2e_session_store_chaos_harness_concurrent_workers";
+    let harness = TestHarness::new(test_name);
+    harness.section("session_store_chaos_harness");
+
+    let sessions_root = harness.temp_path("chaos-sessions");
+    let artifact_dir = harness.temp_path("chaos-artifacts");
+    std::fs::create_dir_all(&sessions_root).expect("create chaos sessions root");
+    std::fs::create_dir_all(&artifact_dir).expect("create chaos artifact dir");
+
+    let mut worker_specs = vec![
+        SessionChaosWorkerSpec {
+            id: "jsonl-a",
+            backend: "jsonl",
+            inject: "compaction",
+        },
+        SessionChaosWorkerSpec {
+            id: "jsonl-b",
+            backend: "jsonl",
+            inject: "corrupt_tail",
+        },
+        SessionChaosWorkerSpec {
+            id: "v2-a",
+            backend: "v2",
+            inject: "v2_faults",
+        },
+    ];
+    #[cfg(feature = "sqlite-sessions")]
+    worker_specs.push(SessionChaosWorkerSpec {
+        id: "sqlite-a",
+        backend: "sqlite",
+        inject: "flush_race",
+    });
+
+    let current_exe = std::env::current_exe().expect("current test binary path");
+    let mut children = Vec::with_capacity(worker_specs.len());
+    for spec in &worker_specs {
+        let worker_cwd = harness.create_dir(["chaos-worker-", spec.id, "-cwd"].concat());
+        harness.assert_log("spawn session chaos worker");
+        children.push(spawn_session_store_chaos_child(
+            &current_exe,
+            &sessions_root,
+            &artifact_dir,
+            &worker_cwd,
+            spec,
+        ));
+    }
+
+    let results = children
+        .into_iter()
+        .map(|child| wait_session_store_chaos_child(child, Duration::from_secs(90)))
+        .collect::<Vec<_>>();
+
+    for result in &results {
+        harness.assert_log("session chaos worker exit");
+        assert_eq!(
+            result.exit_code, 0,
+            "chaos worker {} failed\nstdout:\n{}\nstderr:\n{}",
+            result.worker_id, result.stdout, result.stderr
+        );
+    }
+
+    let summaries = worker_specs
+        .iter()
+        .map(|spec| {
+            let path = chaos_worker_summary_path(&artifact_dir, spec.id);
+            harness.record_artifact(format!("worker-{}.summary.json", spec.id), &path);
+            let raw = std::fs::read_to_string(&path).expect("read chaos worker summary");
+            serde_json::from_str::<Value>(&raw).expect("parse chaos worker summary")
+        })
+        .collect::<Vec<_>>();
+
+    run_async_test(async {
+        for summary in &summaries {
+            assert_eq!(
+                summary.get("schema").and_then(Value::as_str),
+                Some(SESSION_STORE_CHAOS_WORKER_SCHEMA)
+            );
+            let session_path = PathBuf::from(
+                summary
+                    .get("sessionPath")
+                    .and_then(Value::as_str)
+                    .expect("summary session path"),
+            );
+            let (session, diagnostics) =
+                Session::open_with_diagnostics(session_path.to_string_lossy().as_ref())
+                    .await
+                    .expect("parent reopen chaos worker session");
+            assert!(
+                diagnostics.skipped_entries.is_empty(),
+                "clean worker session should reopen without skipped entries: {}",
+                session_path.display()
+            );
+            let observed_texts = user_texts_in_order(&session.to_messages_for_current_path());
+            for expected in string_array_field(summary, "expectedUserTexts") {
+                assert!(
+                    observed_texts.contains(&expected),
+                    "parent reopen dropped expected text {expected}"
+                );
+            }
+
+            if let Some(fixture_path) = summary.get("corruptionFixturePath").and_then(Value::as_str)
+            {
+                let (fixture_session, fixture_diagnostics) =
+                    Session::open_with_diagnostics(fixture_path)
+                        .await
+                        .expect("parent reopen corrupt-tail fixture");
+                assert_eq!(fixture_diagnostics.skipped_entries.len(), 1);
+                let fixture_texts =
+                    user_texts_in_order(&fixture_session.to_messages_for_current_path());
+                for expected in string_array_field(summary, "expectedUserTexts") {
+                    assert!(
+                        fixture_texts.contains(&expected),
+                        "corrupt-tail fixture dropped expected text {expected}"
+                    );
+                }
+            }
+        }
+    });
+
+    let index = SessionIndex::for_sessions_root(&sessions_root);
+    index
+        .reindex_all()
+        .expect("parent refresh session index after chaos workers");
+    let indexed = index
+        .list_sessions(None)
+        .expect("parent list indexed sessions");
+    assert!(
+        indexed.len() >= worker_specs.len(),
+        "session index should include every chaos worker session"
+    );
+    for summary in &summaries {
+        let session_path = summary
+            .get("sessionPath")
+            .and_then(Value::as_str)
+            .expect("summary session path");
+        assert!(
+            indexed.iter().any(|meta| meta.path == session_path),
+            "session index missing chaos worker path {session_path}"
+        );
+    }
+
+    let v2_summary = summaries
+        .iter()
+        .find(|summary| summary.get("backend").and_then(Value::as_str) == Some("v2"))
+        .expect("v2 chaos worker summary");
+    assert_eq!(
+        v2_summary
+            .pointer("/v2/indexRecovered")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        v2_summary
+            .pointer("/v2/staleJsonlRecovered")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        v2_summary
+            .pointer("/v2/rollbackOutcome")
+            .and_then(Value::as_str),
+        Some("ok")
+    );
+
+    let aggregate_path = harness.temp_path("session-store-chaos-harness-summary.json");
+    std::fs::write(
+        &aggregate_path,
+        serde_json::to_string_pretty(&json!({
+            "schema": SESSION_STORE_CHAOS_HARNESS_SCHEMA,
+            "sessionsRoot": sessions_root.display().to_string(),
+            "workerCount": worker_specs.len(),
+            "indexedSessionCount": indexed.len(),
+            "workers": summaries,
+        }))
+        .expect("serialize chaos harness summary"),
+    )
+    .expect("write chaos harness summary");
+    harness.record_artifact("session-store-chaos-harness-summary.json", &aggregate_path);
+
+    write_jsonl_artifacts(&harness, test_name);
 }
 
 #[test]
