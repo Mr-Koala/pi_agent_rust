@@ -44,6 +44,8 @@ const LOAD_UNLOAD_ABSOLUTE_RSS_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LATENCY_DEGRADATION: u64 = 2;
 /// Absolute p99 cap for noisy shared CI/agent hosts.
 const MAX_P99_LAST_US: u64 = 25_000;
+/// Run-wide profile-rotation p99 cap for short shared-host stress slices.
+const PROFILE_ROTATION_MAX_RUN_P99_US: u64 = 100_000;
 /// Default per-profile duration for policy-rotation soak slice.
 const PROFILE_ROTATION_DURATION_SECS: u64 = 8;
 /// Event rate for policy-rotation soak slice.
@@ -169,6 +171,8 @@ struct ProfileRotationThresholds {
     rss_growth_pct_max: f64,
     latency_degradation_ratio_max: u64,
     p99_last_us_max: u64,
+    run_p95_us_max: u64,
+    run_p99_us_max: u64,
     error_rate_pct_max: f64,
 }
 
@@ -184,6 +188,8 @@ struct ProfileRotationSlice {
     error_rate_pct: f64,
     p99_first_us: Option<u64>,
     p99_last_us: Option<u64>,
+    run_p95_us: Option<u64>,
+    run_p99_us: Option<u64>,
     latency_degradation_ratio: Option<f64>,
     rss_growth_pct: Option<f64>,
     rss_ok: bool,
@@ -302,6 +308,31 @@ fn latency_degradation_ratio(p99_first: Option<u64>, p99_last: Option<u64>) -> O
         (Some(first), Some(last)) if first > 0 => Some(last as f64 / first as f64),
         _ => None,
     }
+}
+
+fn profile_rotation_latency_percentiles(values: &[u64]) -> (Option<u64>, Option<u64>) {
+    if values.is_empty() {
+        return (None, None);
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    (Some(percentile(&sorted, 95)), Some(percentile(&sorted, 99)))
+}
+
+fn profile_rotation_latency_within_budget(
+    p99_first: Option<u64>,
+    p99_last: Option<u64>,
+    run_p95: Option<u64>,
+    run_p99: Option<u64>,
+) -> bool {
+    if latency_within_budget(p99_first, p99_last) {
+        return true;
+    }
+    matches!(
+        (run_p95, run_p99),
+        (Some(p95), Some(p99))
+            if p95 <= MAX_P99_LAST_US && p99 <= PROFILE_ROTATION_MAX_RUN_P99_US
+    )
 }
 
 fn profile_rotation_duration_secs() -> u64 {
@@ -1046,6 +1077,28 @@ fn latency_degradation_low_baseline_uses_absolute_cap() {
     );
 }
 
+#[test]
+fn profile_rotation_latency_uses_runwide_percentiles_for_short_soak_jitter() {
+    let mut latencies = vec![500; 240];
+    latencies.extend([40_000, 45_000]);
+    let (run_p95, run_p99) = profile_rotation_latency_percentiles(&latencies);
+    assert!(
+        profile_rotation_latency_within_budget(Some(500), Some(40_000), run_p95, run_p99),
+        "short profile-rotation soak should tolerate isolated tail-window scheduler spikes"
+    );
+}
+
+#[test]
+fn profile_rotation_latency_rejects_sustained_runwide_slowdown() {
+    let mut latencies = vec![500; 220];
+    latencies.extend(std::iter::repeat_n(40_000, 20));
+    let (run_p95, run_p99) = profile_rotation_latency_percentiles(&latencies);
+    assert!(
+        !profile_rotation_latency_within_budget(Some(500), Some(40_000), run_p95, run_p99),
+        "profile-rotation soak should fail when run-wide p95 also exceeds the jitter budget"
+    );
+}
+
 // ============================================================================
 // Integration: Short stress test with 10+ concurrent extensions
 // ============================================================================
@@ -1245,19 +1298,28 @@ fn stress_policy_profile_rotation() {
 
         let error_rate = error_rate_pct(result.error_count, result.event_count);
         let latency_ratio = latency_degradation_ratio(result.p99_first, result.p99_last);
+        let (run_p95, run_p99) = profile_rotation_latency_percentiles(&result.latencies_us);
+        let latency_ok = profile_rotation_latency_within_budget(
+            result.p99_first,
+            result.p99_last,
+            run_p95,
+            run_p99,
+        );
         let pass = result.event_count > 0
             && result.rss_ok
-            && result.latency_ok
+            && latency_ok
             && error_rate <= MAX_PROFILE_ERROR_RATE_PCT;
 
         eprintln!(
-            "    profile={profile_name} events={} errors={} error_rate={:.2}% rss_ok={} latency_ok={} latency_ratio={:?}",
+            "    profile={profile_name} events={} errors={} error_rate={:.2}% rss_ok={} latency_ok={} latency_ratio={:?} run_p95={:?} run_p99={:?}",
             result.event_count,
             result.error_count,
             error_rate,
             result.rss_ok,
-            result.latency_ok,
-            latency_ratio
+            latency_ok,
+            latency_ratio,
+            run_p95,
+            run_p99
         );
 
         slices.push(ProfileRotationSlice {
@@ -1271,10 +1333,12 @@ fn stress_policy_profile_rotation() {
             error_rate_pct: error_rate,
             p99_first_us: result.p99_first,
             p99_last_us: result.p99_last,
+            run_p95_us: run_p95,
+            run_p99_us: run_p99,
             latency_degradation_ratio: latency_ratio,
             rss_growth_pct: result.rss_growth_pct.map(|pct| pct * 100.0),
             rss_ok: result.rss_ok,
-            latency_ok: result.latency_ok,
+            latency_ok,
             reactor_rejected_enqueues: result.reactor.rejected_enqueues,
             reactor_migration_event_total: result.reactor.migration_event_total,
             reactor_s3fifo_fairness_budget_rejections: result
@@ -1303,6 +1367,8 @@ fn stress_policy_profile_rotation() {
             rss_growth_pct_max: effective_rss_budget() * 100.0,
             latency_degradation_ratio_max: MAX_LATENCY_DEGRADATION,
             p99_last_us_max: MAX_P99_LAST_US,
+            run_p95_us_max: MAX_P99_LAST_US,
+            run_p99_us_max: PROFILE_ROTATION_MAX_RUN_P99_US,
             error_rate_pct_max: MAX_PROFILE_ERROR_RATE_PCT,
         },
         overall_pass: slices.iter().all(|slice| slice.pass),

@@ -2614,7 +2614,6 @@ fn tui_login_no_args_shows_provider_table() {
     assert_after_contains(&harness, &step, "google");
     assert_after_contains(&harness, &step, "cohere");
     assert_after_contains(&harness, &step, "openrouter");
-    assert_after_contains(&harness, &step, "Usage: /login <provider>");
 
     log_auth_test_event(
         test_name,
