@@ -162,7 +162,7 @@ impl Default for HostResourceBudgets {
 }
 
 /// Current host sample used for one admission decision.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct HostResourceSample {
     /// One-minute load average, when available.
     pub load_avg_1m: Option<f64>,
@@ -301,6 +301,9 @@ pub const SWARM_ADMISSION_REPLAY_SCHEMA: &str = "pi.resource_governor.swarm_admi
 /// Stable schema for digest-to-admission replay alignment assertions.
 pub const SWARM_ADMISSION_REPLAY_DIGEST_ALIGNMENT_SCHEMA: &str =
     "pi.resource_governor.swarm_admission_replay_digest_alignment.v1";
+
+/// Stable schema for deterministic memory-pressure replay reports.
+pub const SWARM_MEMORY_PRESSURE_REPLAY_SCHEMA: &str = "pi.swarm.memory_pressure_replay.v1";
 
 /// Current tail-latency regime selected by the guard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1217,6 +1220,221 @@ impl SwarmAdmissionControllerDecision {
     }
 }
 
+/// Action selected by deterministic memory-pressure replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwarmMemoryPressureReplayAction {
+    /// No degradation was needed.
+    Continue,
+    /// Compact session messages before admitting more work.
+    CompactMessages,
+    /// Trim or reject retained tool output before it grows further.
+    TrimToolOutput,
+    /// Throttle extension hostcall lanes or queued extension work.
+    ThrottleExtensionHostcalls,
+    /// Delay new work until pressure falls.
+    Backpressure,
+    /// Reject new work before OOM or unbounded buffering risk.
+    Deny,
+}
+
+/// Verdict assigned to a memory-pressure replay profile or report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwarmMemoryPressureReplayVerdict {
+    /// Replay matched the expected profile behavior.
+    Pass,
+    /// Replay evidence did not match the expected fail-closed policy.
+    FailClosed,
+}
+
+/// One deterministic memory-pressure replay profile.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SwarmMemoryPressureReplayProfile {
+    /// Stable profile identifier.
+    pub profile_id: &'static str,
+    /// Human-readable profile description.
+    pub description: &'static str,
+    /// Host inventory used to derive profile budgets.
+    pub host_inventory: SwarmHostInventory,
+    /// Captured host-resource sample.
+    pub host_resource_sample: HostResourceSample,
+    /// Captured tail-latency and queue-depth sample.
+    pub tail_latency_sample: TailLatencyRegimeSample,
+    /// Captured live swarm load counters.
+    pub live_load: SwarmLiveLoad,
+    /// Retained transcript/message volume in tokens.
+    pub message_volume_tokens: u64,
+    /// Retained tool-output volume in bytes.
+    pub retained_tool_output_bytes: u64,
+    /// Buffered extension workload volume in bytes.
+    pub extension_workload_bytes: u64,
+    /// Expected admission action for this profile.
+    pub expected_admission_action: AdmissionAction,
+}
+
+/// Budgets used while replaying one memory-pressure profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SwarmMemoryPressureReplayBudgets {
+    /// Maximum RSS budget from the derived capacity plan.
+    pub max_rss_bytes: u64,
+    /// Maximum retained message tokens before compaction pressure.
+    pub max_message_tokens: u64,
+    /// Maximum retained tool-output bytes.
+    pub max_tool_output_bytes: u64,
+    /// Maximum buffered extension workload bytes.
+    pub max_extension_workload_bytes: u64,
+    /// Recommended active agent count from the derived plan.
+    pub recommended_agent_concurrency: u64,
+    /// Recommended tool hostcall concurrency from the derived plan.
+    pub recommended_tool_concurrency: u64,
+    /// Recommended extension hostcall lanes from the derived plan.
+    pub recommended_extension_hostcall_lanes: u64,
+    /// Recommended RCH verification fanout from the derived plan.
+    pub recommended_rch_verification_fanout: u64,
+}
+
+/// One memory-pressure replay decision.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SwarmMemoryPressureReplayDecision {
+    /// Stable profile identifier.
+    pub profile_id: &'static str,
+    /// Human-readable profile description.
+    pub description: &'static str,
+    /// Host inventory used for this replay.
+    pub host_inventory: SwarmHostInventory,
+    /// Derived budgets used by the replay.
+    pub budgets: SwarmMemoryPressureReplayBudgets,
+    /// Message-volume pressure ratio.
+    pub message_pressure_ratio: f64,
+    /// Tool-output pressure ratio.
+    pub tool_output_pressure_ratio: f64,
+    /// Extension-workload pressure ratio.
+    pub extension_workload_pressure_ratio: f64,
+    /// Expected admission action for this profile.
+    pub expected_admission_action: AdmissionAction,
+    /// Actual admission action selected by the replay.
+    pub admission_action: AdmissionAction,
+    /// True when the replay rejected work before OOM or unbounded buffering risk.
+    pub fail_closed: bool,
+    /// Profile verdict after comparing expected and actual action.
+    pub verdict: SwarmMemoryPressureReplayVerdict,
+    /// Ordered degradation and admission actions.
+    pub actions: Vec<SwarmMemoryPressureReplayAction>,
+    /// Human-readable replay reasons.
+    pub reasons: Vec<String>,
+    /// Full underlying admission-controller decision.
+    pub admission_decision: SwarmAdmissionControllerDecision,
+}
+
+/// Deterministic memory-pressure replay report.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SwarmMemoryPressureReplayReport {
+    /// Stable schema identifier.
+    pub schema: &'static str,
+    /// Overall report verdict.
+    pub verdict: SwarmMemoryPressureReplayVerdict,
+    /// Inventory used to parse source capacity evidence.
+    pub source_inventory: SwarmHostInventory,
+    /// Confidence assigned to the source capacity plan.
+    pub source_plan_confidence: SwarmCapacityConfidence,
+    /// Number of profiles replayed.
+    pub profile_count: usize,
+    /// Ordered decisions for each memory-pressure profile.
+    pub decisions: Vec<SwarmMemoryPressureReplayDecision>,
+}
+
+impl SwarmMemoryPressureReplayReport {
+    /// Render stable JSON telemetry for the memory-pressure replay report.
+    #[must_use]
+    pub fn telemetry(&self) -> Value {
+        json!(self)
+    }
+}
+
+/// Replay memory-pressure profiles against capacity-derived admission budgets.
+pub fn replay_swarm_memory_pressure_profiles(
+    jsonl: &str,
+    source_inventory: SwarmHostInventory,
+    profiles: &[SwarmMemoryPressureReplayProfile],
+) -> Result<SwarmMemoryPressureReplayReport, SwarmCapacityPlanError> {
+    if profiles.is_empty() {
+        return Err(SwarmCapacityPlanError::MissingEvidence(
+            "memory_pressure_profiles",
+        ));
+    }
+
+    let source_plan = plan_swarm_capacity_from_jsonl(jsonl, source_inventory)?;
+    let mut decisions = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        validate_memory_pressure_profile(profile)?;
+        let plan = source_plan.what_if(profile.host_inventory)?;
+        let budgets = memory_pressure_budgets(&plan);
+        let request = memory_pressure_profile_request(profile);
+        let mut controller = SwarmAdmissionController::from_plan(plan);
+        let admission_decision = controller.decide(
+            &request,
+            profile.host_resource_sample,
+            profile.tail_latency_sample,
+            profile.live_load,
+        );
+        let message_pressure_ratio =
+            pressure_ratio_u64(profile.message_volume_tokens, budgets.max_message_tokens);
+        let tool_output_pressure_ratio = pressure_ratio_u64(
+            profile.retained_tool_output_bytes,
+            budgets.max_tool_output_bytes,
+        );
+        let extension_workload_pressure_ratio = pressure_ratio_u64(
+            profile.extension_workload_bytes,
+            budgets.max_extension_workload_bytes,
+        );
+        let actions = memory_pressure_actions(profile, &budgets, admission_decision.action);
+        let verdict = memory_pressure_profile_verdict(
+            profile.expected_admission_action,
+            admission_decision.action,
+        );
+        let reasons =
+            memory_pressure_reasons(profile, &actions, admission_decision.action, verdict);
+
+        decisions.push(SwarmMemoryPressureReplayDecision {
+            profile_id: profile.profile_id,
+            description: profile.description,
+            host_inventory: profile.host_inventory,
+            budgets,
+            message_pressure_ratio,
+            tool_output_pressure_ratio,
+            extension_workload_pressure_ratio,
+            expected_admission_action: profile.expected_admission_action,
+            admission_action: admission_decision.action,
+            fail_closed: matches!(admission_decision.action, AdmissionAction::Deny),
+            verdict,
+            actions,
+            reasons,
+            admission_decision,
+        });
+    }
+
+    let verdict = if decisions.iter().any(|decision| {
+        matches!(
+            decision.verdict,
+            SwarmMemoryPressureReplayVerdict::FailClosed
+        )
+    }) {
+        SwarmMemoryPressureReplayVerdict::FailClosed
+    } else {
+        SwarmMemoryPressureReplayVerdict::Pass
+    };
+
+    Ok(SwarmMemoryPressureReplayReport {
+        schema: SWARM_MEMORY_PRESSURE_REPLAY_SCHEMA,
+        verdict,
+        source_inventory,
+        source_plan_confidence: source_plan.confidence,
+        profile_count: decisions.len(),
+        decisions,
+    })
+}
+
 /// Status for a deterministic swarm admission replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1792,6 +2010,197 @@ impl Default for ResourceGovernor {
     }
 }
 
+fn validate_memory_pressure_profile(
+    profile: &SwarmMemoryPressureReplayProfile,
+) -> Result<(), SwarmCapacityPlanError> {
+    if profile.profile_id.trim().is_empty() {
+        return Err(SwarmCapacityPlanError::InvalidEvidence {
+            line: 0,
+            field: "memory_pressure_profile.profile_id",
+        });
+    }
+    profile.host_inventory.validate()?;
+    validate_capacity_optional_f64(
+        profile.host_resource_sample.load_avg_1m,
+        "memory_pressure_profile.host_resource_sample.load_avg_1m",
+    )?;
+    if profile.host_resource_sample.rss_bytes.is_none() {
+        return Err(SwarmCapacityPlanError::InvalidEvidence {
+            line: 0,
+            field: "memory_pressure_profile.host_resource_sample.rss_bytes",
+        });
+    }
+    if !profile
+        .tail_latency_sample
+        .resource_pressure_ratio
+        .is_finite()
+        || profile.tail_latency_sample.resource_pressure_ratio < 0.0
+    {
+        return Err(SwarmCapacityPlanError::InvalidEvidence {
+            line: 0,
+            field: "memory_pressure_profile.tail_latency_sample.resource_pressure_ratio",
+        });
+    }
+    Ok(())
+}
+
+fn validate_capacity_optional_f64(
+    value: Option<f64>,
+    field: &'static str,
+) -> Result<(), SwarmCapacityPlanError> {
+    if value.is_some_and(|number| !number.is_finite() || number < 0.0) {
+        return Err(SwarmCapacityPlanError::InvalidEvidence { line: 0, field });
+    }
+    Ok(())
+}
+
+fn memory_pressure_budgets(plan: &SwarmCapacityPlan) -> SwarmMemoryPressureReplayBudgets {
+    SwarmMemoryPressureReplayBudgets {
+        max_rss_bytes: plan.resource_budgets.max_rss_bytes,
+        max_message_tokens: message_token_budget(plan.recommended_agent_concurrency),
+        max_tool_output_bytes: plan.resource_budgets.max_tool_output_bytes,
+        max_extension_workload_bytes: extension_workload_budget(plan),
+        recommended_agent_concurrency: plan.recommended_agent_concurrency,
+        recommended_tool_concurrency: plan.recommended_tool_concurrency,
+        recommended_extension_hostcall_lanes: plan.recommended_extension_hostcall_lanes,
+        recommended_rch_verification_fanout: plan.recommended_rch_verification_fanout,
+    }
+}
+
+fn memory_pressure_profile_request(profile: &SwarmMemoryPressureReplayProfile) -> ResourceRequest {
+    ResourceRequest::new(ResourceOperationKind::Tool, "memory_pressure_replay")
+        .with_estimated_tool_output_bytes(profile.retained_tool_output_bytes)
+        .with_queue_depth(profile.tail_latency_sample.queue_depth)
+}
+
+fn memory_pressure_actions(
+    profile: &SwarmMemoryPressureReplayProfile,
+    budgets: &SwarmMemoryPressureReplayBudgets,
+    admission_action: AdmissionAction,
+) -> Vec<SwarmMemoryPressureReplayAction> {
+    let mut actions = Vec::new();
+    push_pressure_action(
+        &mut actions,
+        profile.message_volume_tokens,
+        budgets.max_message_tokens,
+        SwarmMemoryPressureReplayAction::CompactMessages,
+    );
+    push_pressure_action(
+        &mut actions,
+        profile.retained_tool_output_bytes,
+        budgets.max_tool_output_bytes,
+        SwarmMemoryPressureReplayAction::TrimToolOutput,
+    );
+    push_pressure_action(
+        &mut actions,
+        profile.extension_workload_bytes,
+        budgets.max_extension_workload_bytes,
+        SwarmMemoryPressureReplayAction::ThrottleExtensionHostcalls,
+    );
+    match admission_action {
+        AdmissionAction::Admit => {}
+        AdmissionAction::Backpressure => {
+            actions.push(SwarmMemoryPressureReplayAction::Backpressure);
+        }
+        AdmissionAction::Deny => actions.push(SwarmMemoryPressureReplayAction::Deny),
+    }
+    if actions.is_empty() {
+        actions.push(SwarmMemoryPressureReplayAction::Continue);
+    }
+    actions
+}
+
+fn push_pressure_action(
+    actions: &mut Vec<SwarmMemoryPressureReplayAction>,
+    observed: u64,
+    budget: u64,
+    action: SwarmMemoryPressureReplayAction,
+) {
+    if observed >= scale_u64_by_ratio(budget.max(1), DEFAULT_CAPACITY_MEMORY_PRESSURE_RATIO) {
+        actions.push(action);
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn pressure_ratio_u64(observed: u64, budget: u64) -> f64 {
+    if budget == 0 {
+        return f64::INFINITY;
+    }
+    (observed as f64) / (budget as f64)
+}
+
+fn message_token_budget(recommended_agent_concurrency: u64) -> u64 {
+    recommended_agent_concurrency
+        .max(1)
+        .saturating_mul(16_384)
+        .clamp(16_384, 1_048_576)
+}
+
+fn extension_workload_budget(plan: &SwarmCapacityPlan) -> u64 {
+    plan.resource_budgets
+        .max_tool_output_bytes
+        .saturating_mul(plan.recommended_extension_hostcall_lanes.max(1))
+        .max(MIN_TOOL_OUTPUT_BYTES)
+}
+
+const fn memory_pressure_profile_verdict(
+    expected: AdmissionAction,
+    actual: AdmissionAction,
+) -> SwarmMemoryPressureReplayVerdict {
+    if admission_actions_match(expected, actual) {
+        SwarmMemoryPressureReplayVerdict::Pass
+    } else {
+        SwarmMemoryPressureReplayVerdict::FailClosed
+    }
+}
+
+fn memory_pressure_reasons(
+    profile: &SwarmMemoryPressureReplayProfile,
+    actions: &[SwarmMemoryPressureReplayAction],
+    admission_action: AdmissionAction,
+    verdict: SwarmMemoryPressureReplayVerdict,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for action in actions {
+        match action {
+            SwarmMemoryPressureReplayAction::Continue => {
+                reasons.push("profile_within_memory_pressure_budgets".to_string());
+            }
+            SwarmMemoryPressureReplayAction::CompactMessages => {
+                reasons.push(format!(
+                    "message_volume_tokens={} crossed compaction threshold",
+                    profile.message_volume_tokens
+                ));
+            }
+            SwarmMemoryPressureReplayAction::TrimToolOutput => {
+                reasons.push(format!(
+                    "retained_tool_output_bytes={} crossed tool-output threshold",
+                    profile.retained_tool_output_bytes
+                ));
+            }
+            SwarmMemoryPressureReplayAction::ThrottleExtensionHostcalls => {
+                reasons.push(format!(
+                    "extension_workload_bytes={} crossed extension workload threshold",
+                    profile.extension_workload_bytes
+                ));
+            }
+            SwarmMemoryPressureReplayAction::Backpressure => {
+                reasons.push("admission controller selected backpressure".to_string());
+            }
+            SwarmMemoryPressureReplayAction::Deny => {
+                reasons.push("admission controller rejected work fail-closed".to_string());
+            }
+        }
+    }
+    if matches!(verdict, SwarmMemoryPressureReplayVerdict::FailClosed) {
+        reasons.push(format!(
+            "expected {:?}, replayed {:?}",
+            profile.expected_admission_action, admission_action
+        ));
+    }
+    reasons
+}
+
 /// Replay admission decisions from redacted activity-ledger JSONL and captured samples.
 ///
 /// # Errors
@@ -1864,7 +2273,7 @@ pub fn replay_swarm_admission_from_jsonl(
         let request = replay_request_from_entry(entry, sample.tail_latency_sample.queue_depth);
         let decision = controller.decide(
             &request,
-            sample.host_resource_sample.clone(),
+            sample.host_resource_sample,
             sample.tail_latency_sample,
             sample.live_load,
         );
@@ -2974,18 +3383,20 @@ mod tests {
         ResourceGovernor, ResourceOperationKind, ResourceRequest,
         SWARM_ADMISSION_CONTROLLER_SCHEMA, SWARM_ADMISSION_REPLAY_DIGEST_ALIGNMENT_SCHEMA,
         SWARM_ADMISSION_REPLAY_SCHEMA, SWARM_CAPACITY_PLAN_SCHEMA,
-        SWARM_OPERATOR_BUDGET_PROFILES_SCHEMA, SwarmAdmissionController,
-        SwarmAdmissionReplayConfig, SwarmAdmissionReplayDigestAssertionKind,
-        SwarmAdmissionReplayDigestSeverity, SwarmAdmissionReplayDivergenceKind,
-        SwarmAdmissionReplayError, SwarmAdmissionReplaySample, SwarmAdmissionReplayStatus,
-        SwarmCapacityConfidence, SwarmCapacityDimension, SwarmCapacityPlanError,
-        SwarmHostInventory, SwarmLiveLoad, SwarmOperatorHostClass, TAIL_LATENCY_REGIME_SCHEMA,
-        TailLatencyFallbackReason, TailLatencyRegime, TailLatencyRegimeConfig,
-        TailLatencyRegimeGuard, TailLatencyRegimeSample,
+        SWARM_MEMORY_PRESSURE_REPLAY_SCHEMA, SWARM_OPERATOR_BUDGET_PROFILES_SCHEMA,
+        SwarmAdmissionController, SwarmAdmissionReplayConfig,
+        SwarmAdmissionReplayDigestAssertionKind, SwarmAdmissionReplayDigestSeverity,
+        SwarmAdmissionReplayDivergenceKind, SwarmAdmissionReplayError, SwarmAdmissionReplaySample,
+        SwarmAdmissionReplayStatus, SwarmCapacityConfidence, SwarmCapacityDimension,
+        SwarmCapacityPlanError, SwarmHostInventory, SwarmLiveLoad, SwarmMemoryPressureReplayAction,
+        SwarmMemoryPressureReplayProfile, SwarmMemoryPressureReplayVerdict, SwarmOperatorHostClass,
+        TAIL_LATENCY_REGIME_SCHEMA, TailLatencyFallbackReason, TailLatencyRegime,
+        TailLatencyRegimeConfig, TailLatencyRegimeGuard, TailLatencyRegimeSample,
         assert_swarm_digest_admission_replay_alignment,
         generate_operator_budget_profiles_from_jsonl,
         generate_operator_budget_profiles_from_jsonl_with_host_classes,
         plan_swarm_capacity_from_jsonl, replay_swarm_admission_from_jsonl,
+        replay_swarm_memory_pressure_profiles,
     };
     use crate::swarm_activity_ledger::{
         SwarmActivityDigestConfig, SwarmActivityIds, SwarmActivityKind, SwarmActivityLedger,
@@ -3054,6 +3465,54 @@ mod tests {
                 .with_extension_hostcall_lanes(4)
                 .with_active_rch_jobs(1),
         )
+    }
+
+    fn high_capacity_memory_pressure_profile() -> SwarmMemoryPressureReplayProfile {
+        SwarmMemoryPressureReplayProfile {
+            profile_id: "cpu64_mem256gib_nominal",
+            description: "64 CPU / 256 GiB host with heavy but healthy retained state",
+            host_inventory: capacity_inventory(),
+            host_resource_sample: HostResourceSample {
+                load_avg_1m: Some(20.0),
+                rss_bytes: Some(512 * 1024 * 1024),
+                process_count: Some(128),
+                fd_count: Some(128),
+            },
+            tail_latency_sample: TailLatencyRegimeSample::new(120, 600, 128, 0.30),
+            live_load: SwarmLiveLoad::empty()
+                .with_active_agents(16)
+                .with_active_tool_calls(32)
+                .with_extension_hostcall_lanes(8)
+                .with_active_rch_jobs(4),
+            message_volume_tokens: 128_000,
+            retained_tool_output_bytes: 32 * 1024 * 1024,
+            extension_workload_bytes: 256 * 1024 * 1024,
+            expected_admission_action: AdmissionAction::Admit,
+        }
+    }
+
+    fn constrained_memory_pressure_profile() -> SwarmMemoryPressureReplayProfile {
+        SwarmMemoryPressureReplayProfile {
+            profile_id: "cgroup_mem1gib_degraded",
+            description: "1 GiB cgroup limit with retained transcript and tool-output pressure",
+            host_inventory: SwarmHostInventory::new(4, 4, 1_024),
+            host_resource_sample: HostResourceSample {
+                load_avg_1m: Some(2.0),
+                rss_bytes: Some(690 * 1024 * 1024),
+                process_count: Some(80),
+                fd_count: Some(96),
+            },
+            tail_latency_sample: TailLatencyRegimeSample::new(180, 800, 64, 0.88),
+            live_load: SwarmLiveLoad::empty()
+                .with_active_agents(1)
+                .with_active_tool_calls(2)
+                .with_extension_hostcall_lanes(1)
+                .with_active_rch_jobs(1),
+            message_volume_tokens: 48_000,
+            retained_tool_output_bytes: 128 * 1024 * 1024,
+            extension_workload_bytes: 180 * 1024 * 1024,
+            expected_admission_action: AdmissionAction::Deny,
+        }
     }
 
     fn saturated_admission_fixture_jsonl() -> String {
@@ -3399,6 +3858,136 @@ mod tests {
             err,
             SwarmCapacityPlanError::InvalidHostInventory("observed_cpu_cores")
         ));
+    }
+
+    #[test]
+    fn memory_pressure_replay_exploits_large_host_without_premature_degradation()
+    -> Result<(), SwarmCapacityPlanError> {
+        let profile = high_capacity_memory_pressure_profile();
+        let report = replay_swarm_memory_pressure_profiles(
+            capacity_fixture_jsonl(),
+            capacity_inventory(),
+            &[profile],
+        )?;
+
+        assert_eq!(report.schema, SWARM_MEMORY_PRESSURE_REPLAY_SCHEMA);
+        assert_eq!(report.verdict, SwarmMemoryPressureReplayVerdict::Pass);
+        assert_eq!(report.profile_count, 1);
+        assert_eq!(report.source_plan_confidence, SwarmCapacityConfidence::High);
+
+        let [decision] = report.decisions.as_slice() else {
+            assert_eq!(report.decisions.len(), 1);
+            return Ok(());
+        };
+        assert_eq!(decision.profile_id, "cpu64_mem256gib_nominal");
+        assert_eq!(decision.admission_action, AdmissionAction::Admit);
+        assert!(!decision.fail_closed);
+        assert_eq!(
+            decision.actions,
+            [SwarmMemoryPressureReplayAction::Continue]
+        );
+        assert_eq!(decision.budgets.recommended_agent_concurrency, 32);
+        assert_eq!(decision.budgets.recommended_tool_concurrency, 64);
+        assert!(decision.budgets.max_message_tokens >= 524_288);
+        assert!(decision.message_pressure_ratio < 0.70);
+        assert!(decision.tool_output_pressure_ratio < 0.70);
+        assert!(decision.extension_workload_pressure_ratio < 0.70);
+        assert_eq!(
+            report.telemetry().get("schema").and_then(Value::as_str),
+            Some(SWARM_MEMORY_PRESSURE_REPLAY_SCHEMA)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn memory_pressure_replay_degrades_constrained_container_before_oom()
+    -> Result<(), SwarmCapacityPlanError> {
+        let profile = constrained_memory_pressure_profile();
+        let report = replay_swarm_memory_pressure_profiles(
+            capacity_fixture_jsonl(),
+            capacity_inventory(),
+            &[profile],
+        )?;
+
+        assert_eq!(report.verdict, SwarmMemoryPressureReplayVerdict::Pass);
+        let [decision] = report.decisions.as_slice() else {
+            assert_eq!(report.decisions.len(), 1);
+            return Ok(());
+        };
+        assert_eq!(decision.profile_id, "cgroup_mem1gib_degraded");
+        assert_eq!(decision.verdict, SwarmMemoryPressureReplayVerdict::Pass);
+        assert_eq!(decision.admission_action, AdmissionAction::Deny);
+        assert!(decision.fail_closed);
+        assert!(
+            decision
+                .actions
+                .contains(&SwarmMemoryPressureReplayAction::CompactMessages)
+        );
+        assert!(
+            decision
+                .actions
+                .contains(&SwarmMemoryPressureReplayAction::TrimToolOutput)
+        );
+        assert!(
+            decision
+                .actions
+                .contains(&SwarmMemoryPressureReplayAction::ThrottleExtensionHostcalls)
+        );
+        assert!(
+            decision
+                .actions
+                .contains(&SwarmMemoryPressureReplayAction::Deny)
+        );
+        assert_eq!(
+            decision
+                .admission_decision
+                .resource_decision
+                .dominant_dimension,
+            ResourceDimension::ToolOutput
+        );
+        assert!(decision.budgets.max_rss_bytes < 1024 * 1024 * 1024);
+        assert!(matches!(
+            decision
+                .admission_decision
+                .resource_decision
+                .sample
+                .rss_bytes,
+            Some(bytes) if bytes < 1024 * 1024 * 1024
+        ));
+        assert!(decision.message_pressure_ratio >= 1.0);
+        assert!(decision.tool_output_pressure_ratio >= 1.0);
+        assert!(decision.extension_workload_pressure_ratio >= 1.0);
+        Ok(())
+    }
+
+    #[test]
+    fn memory_pressure_replay_fails_closed_on_expected_action_mismatch()
+    -> Result<(), SwarmCapacityPlanError> {
+        let mut profile = high_capacity_memory_pressure_profile();
+        profile.expected_admission_action = AdmissionAction::Deny;
+        let report = replay_swarm_memory_pressure_profiles(
+            capacity_fixture_jsonl(),
+            capacity_inventory(),
+            &[profile],
+        )?;
+
+        assert_eq!(report.verdict, SwarmMemoryPressureReplayVerdict::FailClosed);
+        let [decision] = report.decisions.as_slice() else {
+            assert_eq!(report.decisions.len(), 1);
+            return Ok(());
+        };
+        assert_eq!(
+            decision.verdict,
+            SwarmMemoryPressureReplayVerdict::FailClosed
+        );
+        assert_eq!(decision.admission_action, AdmissionAction::Admit);
+        assert!(
+            decision
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("expected Deny, replayed Admit"))
+        );
+        Ok(())
     }
 
     #[test]
