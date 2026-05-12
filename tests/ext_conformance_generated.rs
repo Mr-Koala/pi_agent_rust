@@ -379,7 +379,7 @@ fn snapshot_registrations(manager: &ExtensionManager) -> Value {
         "flags": flags,
         "providers": providers,
         "tool_defs": tool_defs,
-        "event_handlers": event_hooks.clone(),
+        "event_handlers": event_hooks,
         "event_hooks": event_hooks,
         "models": models,
     })
@@ -549,7 +549,6 @@ fn denied_capability_event_hook_keeps_registration_but_blocks_exec() {
         "modelRegistry": {},
     }));
     let result = common::run_async({
-        let runtime = runtime.clone();
         async move {
             runtime
                 .dispatch_event(
@@ -874,7 +873,7 @@ fn conformance_full_report() {
             continue;
         }
 
-        eprint!("  [{:>3}/{total}] {:<50} ", idx + 1, &entry.id);
+        eprint!("  [{:>3}/{total}] {:<50} ", idx + 1, entry.id);
         let result = try_conformance(&entry.id);
         eprintln!(
             "{:<6} ({}ms)",
@@ -2002,7 +2001,7 @@ fn conformance_failure_dossiers() {
             continue;
         }
 
-        eprint!("  [{:>3}/{total}] {:<50} ", idx + 1, &entry.id);
+        eprint!("  [{:>3}/{total}] {:<50} ", idx + 1, entry.id);
         let (result, snapshot) = try_conformance_detailed(&entry.id);
 
         match result.status.as_str() {
@@ -2420,7 +2419,7 @@ fn conformance_must_pass_gate() {
             });
             continue;
         }
-        eprint!("  [{:>3}/{}] {:<50} ", idx + 1, must_pass.len(), &entry.id);
+        eprint!("  [{:>3}/{}] {:<50} ", idx + 1, must_pass.len(), entry.id);
         let result = try_conformance(&entry.id);
         eprintln!(
             "{:<6} ({}ms)",
@@ -2450,7 +2449,7 @@ fn conformance_must_pass_gate() {
             });
             continue;
         }
-        eprint!("  [{:>3}/{}] {:<50} ", idx + 1, stretch.len(), &entry.id);
+        eprint!("  [{:>3}/{}] {:<50} ", idx + 1, stretch.len(), entry.id);
         let result = try_conformance(&entry.id);
         eprintln!(
             "{:<6} ({}ms)",
@@ -3136,7 +3135,7 @@ fn conformance_provider_compat_matrix() {
         eprintln!("  --- Mode: {} ({}) ---", mode.name, mode.description);
 
         for (idx, entry) in must_pass.iter().enumerate() {
-            eprint!("  [{:>3}/{}] {:<50} ", idx + 1, must_pass.len(), &entry.id);
+            eprint!("  [{:>3}/{}] {:<50} ", idx + 1, must_pass.len(), entry.id);
             let result = try_conformance_with_env(&entry.id, &mode.env_overrides);
             let fc = if result.status == "pass" {
                 None
@@ -3921,7 +3920,7 @@ fn conformance_extension_journeys() {
             "  [{:>3}/{}] {:<45} {:?} ",
             idx + 1,
             must_pass.len(),
-            &entry.id,
+            entry.id,
             category,
         );
 
@@ -4337,7 +4336,7 @@ fn conformance_health_delta() {
             "  [{:>3}/{}] {:<50} ",
             idx + 1,
             manifest.extensions.len(),
-            &entry.id
+            entry.id
         );
         let result = try_conformance(&entry.id);
         match result.status.as_str() {
