@@ -3,8 +3,9 @@
 
 use chrono::{DateTime, Utc};
 use pi::semantic_workspace_graph::{
-    BeadActionabilityStatus, EvidenceFreshnessStatus, GraphInputStatus, SemanticEdgeType,
-    SemanticNodeType, SemanticWorkspaceGraph, SemanticWorkspaceGraphBuilder,
+    BeadActionabilityStatus, ContextBundleBudget, ContextBundleRequest, EvidenceFreshnessStatus,
+    GraphInputStatus, SemanticContextBundlePlanner, SemanticEdgeType, SemanticNodeType,
+    SemanticWorkspaceGraph, SemanticWorkspaceGraphBuilder,
 };
 use serde_json::json;
 use std::error::Error;
@@ -55,10 +56,58 @@ pub fn stream_response() {}
     )?;
     write_fixture(
         root,
+        "src/session.rs",
+        r"
+pub struct SessionStore;
+
+pub fn save_session() {}
+",
+    )?;
+    write_fixture(
+        root,
+        "src/extensions.rs",
+        r"
+pub struct ExtensionHost;
+
+pub fn load_extension() {}
+",
+    )?;
+    write_fixture(
+        root,
         "tests/widget_flow.rs",
         r"
 #[test]
 fn builds_widget() {
+    assert_eq!(2 + 2, 4);
+}
+",
+    )?;
+    write_fixture(
+        root,
+        "tests/provider_streaming.rs",
+        r"
+#[test]
+fn streams_openai_provider() {
+    assert_eq!(2 + 2, 4);
+}
+",
+    )?;
+    write_fixture(
+        root,
+        "tests/session_flow.rs",
+        r"
+#[test]
+fn saves_session() {
+    assert_eq!(2 + 2, 4);
+}
+",
+    )?;
+    write_fixture(
+        root,
+        "tests/extension_flow.rs",
+        r"
+#[test]
+fn loads_extension() {
     assert_eq!(2 + 2, 4);
 }
 ",
@@ -223,6 +272,36 @@ fn bead_status(
         .ok_or_else(|| format!("missing bead node for {bead_id}"))?;
     node.bead_actionability_status
         .ok_or_else(|| format!("missing bead actionability for {bead_id}").into())
+}
+
+fn bundle_golden_summary(
+    bundle: &pi::semantic_workspace_graph::SemanticContextBundle,
+) -> serde_json::Value {
+    json!({
+        "selected": bundle
+            .selected_items
+            .iter()
+            .map(|item| json!({
+                "path": &item.source_path,
+                "title": &item.title,
+                "reason": &item.reason,
+            }))
+            .collect::<Vec<_>>(),
+        "stale_suppressions": bundle
+            .stale_evidence_suppressions
+            .iter()
+            .map(|item| json!({
+                "path": &item.source_path,
+                "reason": &item.reason,
+            }))
+            .collect::<Vec<_>>(),
+        "commands": &bundle.suggested_validation_commands,
+        "budget_excluded": bundle
+            .excluded_items
+            .iter()
+            .filter(|item| item.reason == "budget_exceeded")
+            .count(),
+    })
 }
 
 #[test]
@@ -444,6 +523,169 @@ fn builder_indexes_workspace_surfaces_and_classifies_fail_closed() -> TestResult
     assert!(command_nodes.iter().any(|node| {
         node.metadata.get("command") == Some(&json!("cargo test --test widget_flow builds_widget"))
     }));
+
+    Ok(())
+}
+
+#[test]
+fn planner_emits_budgeted_golden_bundles_for_core_task_shapes() -> TestResult {
+    let temp = fixture_workspace()?;
+    let graph = build_fixture_graph(temp.path())?;
+    let planner = SemanticContextBundlePlanner::new(&graph);
+
+    let provider = planner.plan(&ContextBundleRequest {
+        query: Some("openai provider streaming".to_string()),
+        budget: ContextBundleBudget {
+            max_items: 3,
+            max_bytes: 4096,
+        },
+        ..ContextBundleRequest::default()
+    });
+    assert_eq!(
+        bundle_golden_summary(&provider),
+        json!({
+            "selected": [
+                {
+                    "path": "tests/provider_streaming.rs",
+                    "title": "cargo test --test provider_streaming streams_openai_provider",
+                    "reason": "query_match"
+                },
+                {
+                    "path": "tests/provider_streaming.rs",
+                    "title": "streams_openai_provider",
+                    "reason": "query_match"
+                },
+                {
+                    "path": "src/providers/openai.rs",
+                    "title": "openai",
+                    "reason": "query_match"
+                }
+            ],
+            "stale_suppressions": [],
+            "commands": ["cargo test --test provider_streaming streams_openai_provider"],
+            "budget_excluded": 5
+        })
+    );
+
+    let session = planner.plan(&ContextBundleRequest {
+        query: Some("session persistence save".to_string()),
+        budget: ContextBundleBudget {
+            max_items: 3,
+            max_bytes: 4096,
+        },
+        ..ContextBundleRequest::default()
+    });
+    assert_eq!(
+        bundle_golden_summary(&session),
+        json!({
+            "selected": [
+                {
+                    "path": "tests/session_flow.rs",
+                    "title": "cargo test --test session_flow saves_session",
+                    "reason": "query_match"
+                },
+                {
+                    "path": "tests/session_flow.rs",
+                    "title": "saves_session",
+                    "reason": "query_match"
+                },
+                {
+                    "path": "src/session.rs",
+                    "title": "save_session",
+                    "reason": "query_match"
+                }
+            ],
+            "stale_suppressions": [],
+            "commands": ["cargo test --test session_flow saves_session"],
+            "budget_excluded": 3
+        })
+    );
+
+    let extension = planner.plan(&ContextBundleRequest {
+        query: Some("extension closeout health_delta".to_string()),
+        budget: ContextBundleBudget {
+            max_items: 3,
+            max_bytes: 4096,
+        },
+        ..ContextBundleRequest::default()
+    });
+    assert_eq!(
+        bundle_golden_summary(&extension),
+        json!({
+            "selected": [
+                {
+                    "path": "docs/evidence/extension-health-delta-failure-disposition.json",
+                    "title": "pi.ext.health_delta_failure_disposition.v1",
+                    "reason": "query_match,current_release_claim_evidence"
+                },
+                {
+                    "path": "tests/extension_flow.rs",
+                    "title": "cargo test --test extension_flow loads_extension",
+                    "reason": "query_match"
+                },
+                {
+                    "path": "tests/extension_flow.rs",
+                    "title": "loads_extension",
+                    "reason": "query_match"
+                }
+            ],
+            "stale_suppressions": [],
+            "commands": ["cargo test --test extension_flow loads_extension"],
+            "budget_excluded": 6
+        })
+    );
+
+    let swarm = planner.plan(&ContextBundleRequest {
+        query: Some("drop-in swarm claim readiness".to_string()),
+        bead_id: Some("bd-open".to_string()),
+        changed_paths: vec!["README.md".to_string()],
+        budget: ContextBundleBudget {
+            max_items: 4,
+            max_bytes: 2048,
+        },
+        ..ContextBundleRequest::default()
+    });
+    let swarm_summary = bundle_golden_summary(&swarm);
+    assert_eq!(
+        swarm_summary["stale_suppressions"],
+        json!([
+            {
+                "path": "docs/evidence/dropin-certification-verdict.json",
+                "reason": "suppressed_stale_or_unsafe_evidence"
+            },
+            {
+                "path": "docs/evidence/uncertified.json",
+                "reason": "suppressed_stale_or_unsafe_evidence"
+            },
+            {
+                "path": "docs/evidence/missing.json",
+                "reason": "suppressed_stale_or_unsafe_evidence"
+            }
+        ])
+    );
+    assert!(swarm.selected_items.iter().any(|item| {
+        item.source_path == "docs/evidence/dropin-parity-gap-ledger.json"
+            && item.reason.contains("related_to_bead_or_changed_path")
+    }));
+    assert!(
+        swarm
+            .excluded_items
+            .iter()
+            .any(|item| { item.reason == "budget_exceeded" })
+    );
+
+    let failing_command = planner.plan(&ContextBundleRequest {
+        failing_command: Some("cargo test --test session_flow saves_session".to_string()),
+        budget: ContextBundleBudget {
+            max_items: 1,
+            max_bytes: 512,
+        },
+        ..ContextBundleRequest::default()
+    });
+    assert_eq!(
+        failing_command.suggested_validation_commands,
+        vec!["cargo test --test session_flow saves_session"]
+    );
 
     Ok(())
 }

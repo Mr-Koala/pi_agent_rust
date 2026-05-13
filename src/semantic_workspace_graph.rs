@@ -20,6 +20,7 @@ use std::time::UNIX_EPOCH;
 
 pub const SEMANTIC_WORKSPACE_GRAPH_SCHEMA: &str = "pi.semantic_workspace_graph.v1";
 pub const GRAPH_BUILDER_SCHEMA: &str = "pi.semantic_workspace_graph.builder_trace.v1";
+pub const SEMANTIC_CONTEXT_BUNDLE_SCHEMA: &str = "pi.semantic_context_bundle.v1";
 
 const DEFAULT_STALE_AFTER_DAYS: i64 = 90;
 
@@ -628,6 +629,274 @@ impl SemanticWorkspaceGraph {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextBundleBudget {
+    pub max_items: usize,
+    pub max_bytes: u64,
+}
+
+impl Default for ContextBundleBudget {
+    fn default() -> Self {
+        Self {
+            max_items: 24,
+            max_bytes: 32 * 1024,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextBundleRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bead_id: Option<String>,
+    pub changed_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failing_command: Option<String>,
+    pub budget: ContextBundleBudget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticContextBundle {
+    pub schema: String,
+    pub budget: ContextBundleBudget,
+    pub selected_items: Vec<ContextBundleItem>,
+    pub excluded_items: Vec<ContextBundleExclusion>,
+    pub stale_evidence_suppressions: Vec<ContextBundleExclusion>,
+    pub suggested_validation_commands: Vec<String>,
+    pub estimated_bytes: u64,
+    pub estimated_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextBundleItem {
+    pub node_id: String,
+    pub node_type: SemanticNodeType,
+    pub source_path: String,
+    pub title: String,
+    pub reason: String,
+    pub score: i64,
+    pub estimated_bytes: u64,
+    pub estimated_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freshness_status: Option<EvidenceFreshnessStatus>,
+    pub redaction_status: RedactionStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextBundleExclusion {
+    pub node_id: String,
+    pub node_type: SemanticNodeType,
+    pub source_path: String,
+    pub title: String,
+    pub reason: String,
+    pub score: i64,
+    pub estimated_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freshness_status: Option<EvidenceFreshnessStatus>,
+}
+
+pub struct SemanticContextBundlePlanner<'a> {
+    graph: &'a SemanticWorkspaceGraph,
+}
+
+impl<'a> SemanticContextBundlePlanner<'a> {
+    #[must_use]
+    pub fn new(graph: &'a SemanticWorkspaceGraph) -> Self {
+        Self { graph }
+    }
+
+    #[must_use]
+    pub fn plan(&self, request: &ContextBundleRequest) -> SemanticContextBundle {
+        let query_terms = tokenize_context_query(request.query.as_deref());
+        let related_ids = self.related_node_ids(request);
+        let mut candidates = self.scored_candidates(request, &query_terms, &related_ids);
+        candidates.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| left.node.source_path.cmp(&right.node.source_path))
+                .then_with(|| left.node.id.cmp(&right.node.id))
+        });
+
+        let mut selected_items = Vec::new();
+        let mut excluded_items = Vec::new();
+        let mut stale_evidence_suppressions = Vec::new();
+        let mut suggested_validation_commands = BTreeSet::new();
+        let mut estimated_bytes = 0_u64;
+
+        for candidate in candidates {
+            if candidate.must_suppress {
+                let exclusion = candidate.to_exclusion("suppressed_stale_or_unsafe_evidence");
+                stale_evidence_suppressions.push(exclusion.clone());
+                excluded_items.push(exclusion);
+                continue;
+            }
+
+            if selected_items.len() >= request.budget.max_items
+                || estimated_bytes.saturating_add(candidate.estimated_bytes)
+                    > request.budget.max_bytes
+            {
+                excluded_items.push(candidate.to_exclusion("budget_exceeded"));
+                continue;
+            }
+
+            estimated_bytes = estimated_bytes.saturating_add(candidate.estimated_bytes);
+            if candidate.node.node_type == SemanticNodeType::ValidationCommand {
+                if let Some(command) = candidate
+                    .node
+                    .metadata
+                    .get("command")
+                    .and_then(Value::as_str)
+                {
+                    suggested_validation_commands.insert(command.to_string());
+                }
+            }
+            selected_items.push(candidate.to_item());
+        }
+
+        SemanticContextBundle {
+            schema: SEMANTIC_CONTEXT_BUNDLE_SCHEMA.to_string(),
+            budget: request.budget.clone(),
+            selected_items,
+            excluded_items,
+            stale_evidence_suppressions,
+            suggested_validation_commands: suggested_validation_commands.into_iter().collect(),
+            estimated_bytes,
+            estimated_tokens: estimate_tokens(estimated_bytes),
+        }
+    }
+
+    fn related_node_ids(&self, request: &ContextBundleRequest) -> BTreeSet<String> {
+        let mut ids = BTreeSet::new();
+        if let Some(bead_id) = request.bead_id.as_deref()
+            && let Some(bead_node) = self.graph.nodes.iter().find(|node| {
+                node.node_type == SemanticNodeType::Bead
+                    && node.metadata.get("bead_id").and_then(Value::as_str) == Some(bead_id)
+            })
+        {
+            ids.insert(bead_node.id.clone());
+            for edge in &self.graph.edges {
+                if edge.source == bead_node.id {
+                    ids.insert(edge.target.clone());
+                }
+                if edge.target == bead_node.id {
+                    ids.insert(edge.source.clone());
+                }
+            }
+        }
+
+        for changed_path in &request.changed_paths {
+            for node in &self.graph.nodes {
+                if paths_are_related(&node.source_path, changed_path) {
+                    ids.insert(node.id.clone());
+                }
+            }
+        }
+
+        self.expand_related_edges(ids)
+    }
+
+    fn expand_related_edges(&self, mut ids: BTreeSet<String>) -> BTreeSet<String> {
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for edge in &self.graph.edges {
+                if ids.contains(&edge.source) && ids.insert(edge.target.clone()) {
+                    changed = true;
+                }
+                if ids.contains(&edge.target) && ids.insert(edge.source.clone()) {
+                    changed = true;
+                }
+            }
+        }
+        ids
+    }
+
+    fn scored_candidates(
+        &self,
+        request: &ContextBundleRequest,
+        query_terms: &[String],
+        related_ids: &BTreeSet<String>,
+    ) -> Vec<ScoredContextNode<'a>> {
+        let failing_command = request
+            .failing_command
+            .as_deref()
+            .map(str::to_ascii_lowercase);
+        self.graph
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                if node.node_type == SemanticNodeType::CodeSymbol
+                    && node.source_path.starts_with("tests/")
+                {
+                    return None;
+                }
+
+                let mut score = 0_i64;
+                let mut reasons = Vec::new();
+
+                if related_ids.contains(&node.id) {
+                    score += 180;
+                    reasons.push("related_to_bead_or_changed_path");
+                }
+
+                if !query_terms.is_empty() {
+                    let matched_terms = matched_query_terms(node, query_terms);
+                    if !matched_terms.is_empty() {
+                        score += i64::try_from(matched_terms.len()).unwrap_or(i64::MAX) * 45;
+                        reasons.push("query_match");
+                    }
+                }
+
+                if let Some(failing_command) = failing_command.as_deref()
+                    && validation_command_matches(node, failing_command)
+                {
+                    score += 220;
+                    reasons.push("failing_command_match");
+                }
+
+                if score > 0 {
+                    score += base_node_score(node);
+                }
+
+                if score > 0
+                    && node.node_type == SemanticNodeType::EvidenceArtifact
+                    && node
+                        .metadata
+                        .get("release_claim_allowed")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                {
+                    score += 30;
+                    reasons.push("current_release_claim_evidence");
+                }
+
+                let must_suppress = node
+                    .metadata
+                    .get("suppresses_release_claim_context")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if must_suppress && score > 0 {
+                    reasons.push("suppressed_by_claim_gate");
+                }
+
+                if score <= 0 {
+                    None
+                } else {
+                    Some(ScoredContextNode {
+                        node,
+                        score,
+                        estimated_bytes: estimate_node_bytes(node),
+                        reason: reasons.join(","),
+                        must_suppress,
+                    })
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputFingerprint {
     pub source_path: String,
     pub surface_id: String,
@@ -973,6 +1242,45 @@ struct PendingBeadExternalRef {
     source_node_id: String,
     bead_id: String,
     external_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScoredContextNode<'a> {
+    node: &'a SemanticGraphNode,
+    score: i64,
+    estimated_bytes: u64,
+    reason: String,
+    must_suppress: bool,
+}
+
+impl ScoredContextNode<'_> {
+    fn to_item(&self) -> ContextBundleItem {
+        ContextBundleItem {
+            node_id: self.node.id.clone(),
+            node_type: self.node.node_type,
+            source_path: self.node.source_path.clone(),
+            title: self.node.title.clone(),
+            reason: self.reason.clone(),
+            score: self.score,
+            estimated_bytes: self.estimated_bytes,
+            estimated_tokens: estimate_tokens(self.estimated_bytes),
+            freshness_status: self.node.freshness_status,
+            redaction_status: self.node.redaction_status,
+        }
+    }
+
+    fn to_exclusion(&self, reason: &str) -> ContextBundleExclusion {
+        ContextBundleExclusion {
+            node_id: self.node.id.clone(),
+            node_type: self.node.node_type,
+            source_path: self.node.source_path.clone(),
+            title: self.node.title.clone(),
+            reason: reason.to_string(),
+            score: self.score,
+            estimated_bytes: self.estimated_bytes,
+            freshness_status: self.node.freshness_status,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1567,6 +1875,99 @@ fn has_blocking_dependency(value: &Value) -> bool {
                     .is_some_and(|relation| relation == "blocks")
             })
         })
+}
+
+fn tokenize_context_query(query: Option<&str>) -> Vec<String> {
+    query
+        .unwrap_or_default()
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .map(str::trim)
+        .filter(|term| term.len() >= 3)
+        .map(str::to_ascii_lowercase)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn base_node_score(node: &SemanticGraphNode) -> i64 {
+    match node.node_type {
+        SemanticNodeType::Bead => 35,
+        SemanticNodeType::ValidationCommand => 30,
+        SemanticNodeType::TestCase => 25,
+        SemanticNodeType::EvidenceArtifact | SemanticNodeType::ProviderSurface => 20,
+        SemanticNodeType::CodeSymbol => 15,
+        SemanticNodeType::DocSection => 12,
+        SemanticNodeType::FileRegion => 10,
+    }
+}
+
+fn matched_query_terms(node: &SemanticGraphNode, query_terms: &[String]) -> Vec<String> {
+    let haystack = format!(
+        "{} {} {}",
+        node.source_path,
+        node.title,
+        searchable_metadata(&node.metadata)
+    )
+    .to_ascii_lowercase();
+    query_terms
+        .iter()
+        .filter(|term| haystack.contains(term.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn searchable_metadata(metadata: &BTreeMap<String, Value>) -> String {
+    let mut values = Vec::new();
+    for key in [
+        "bead_id",
+        "title",
+        "issue_type",
+        "artifact_schema",
+        "provider_id",
+        "command",
+        "test_target",
+        "citation_path",
+        "external_ref",
+    ] {
+        if let Some(value) = metadata.get(key).and_then(Value::as_str) {
+            values.push(value);
+        }
+    }
+    values.join(" ")
+}
+
+fn validation_command_matches(node: &SemanticGraphNode, failing_command: &str) -> bool {
+    node.node_type == SemanticNodeType::ValidationCommand
+        && node
+            .metadata
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| {
+                let command = command.to_ascii_lowercase();
+                command.contains(failing_command) || failing_command.contains(&command)
+            })
+}
+
+fn paths_are_related(left: &str, right: &str) -> bool {
+    left == right || left.starts_with(right) || right.starts_with(left)
+}
+
+fn estimate_node_bytes(node: &SemanticGraphNode) -> u64 {
+    if let Some(size_bytes) = node.size_bytes {
+        return size_bytes.clamp(128, 16 * 1024);
+    }
+    let line_count = match (node.line_start, node.line_end) {
+        (Some(start), Some(end)) if end >= start => end.saturating_sub(start).saturating_add(1),
+        _ => 1,
+    };
+    u64::try_from(line_count)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(160)
+        .clamp(128, 8 * 1024)
+}
+
+fn estimate_tokens(bytes: u64) -> u64 {
+    bytes.saturating_add(3) / 4
 }
 
 fn parse_rust_symbol(line: &str) -> Option<ParsedRustSymbol> {
