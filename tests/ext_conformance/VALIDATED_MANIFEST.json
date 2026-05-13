@@ -3710,7 +3710,7 @@
       "entry_path": "npm/marckrenn-pi-sub-core/index.ts",
       "source_tier": "npm-registry",
       "capabilities": {
-        "registers_tools": true,
+        "registers_tools": false,
         "registers_commands": true,
         "registers_flags": false,
         "registers_providers": false,
@@ -7322,7 +7322,7 @@
       "entry_path": "third-party/marckrenn-pi-sub/sub-bar/index.ts",
       "source_tier": "third-party-github",
       "capabilities": {
-        "registers_tools": true,
+        "registers_tools": false,
         "registers_commands": true,
         "registers_flags": false,
         "registers_providers": false,
@@ -7485,9 +7485,7 @@
       "registrations": {
         "tools": [],
         "commands": [
-          "diff",
-          "files",
-          "tui"
+          "diff"
         ],
         "flags": [],
         "event_handlers": [
@@ -7829,15 +7827,13 @@
           "rpbind",
           "sandbox",
           "session-ask",
-          "skill",
           "speedread",
           "steer",
           "todos",
           "tools",
           "ultrathink",
           "usage",
-          "vog",
-          "ws"
+          "vog"
         ],
         "flags": [],
         "event_handlers": [

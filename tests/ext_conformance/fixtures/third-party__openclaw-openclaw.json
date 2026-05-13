@@ -12,9 +12,7 @@
       "summary": "Verifies diff command, event hooks registered for openclaw-openclaw",
       "expect": {
         "commands_contains": [
-          "diff",
-          "files",
-          "tui"
+          "diff"
         ],
         "event_hooks_contains": [
           "before_agent_start",

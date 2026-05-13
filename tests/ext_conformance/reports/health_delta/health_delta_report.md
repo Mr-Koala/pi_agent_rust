@@ -1,27 +1,34 @@
 # Extension Health & Regression Delta Report
 
-> Generated: 2026-05-13T03:07:06Z
+> Generated: 2026-05-13T03:37:59Z
 > Baseline: 2026-02-07T23:31:53Z
 
 ## Aggregate Comparison
 
 | Metric | Baseline | Current | Delta |
 |--------|----------|---------|-------|
-| Tested | 223 | 224 | +1 |
-| Passed | 209 | 219 | +10 |
-| Failed | 14 | 5 | -9 |
-| Pass rate | 93.7% | 97.8% | +4.1pp |
+| Tested | 223 | 223 | +0 |
+| Passed | 209 | 223 | +14 |
+| Failed | 14 | 0 | -14 |
+| Pass rate | 93.7% | 100.0% | +6.3pp |
 
 ## Delta Summary
 
 | Category | Count |
 |----------|-------|
 | Regressions | 0 |
-| Fixes | 12 |
+| Fixes | 13 |
 | New extensions | 210 |
 | Removed | 0 |
-| Unchanged failures | 2 |
-| **Net change** | **+12** |
+| Unchanged failures | 0 |
+| Excluded fixtures | 1 |
+| **Net change** | **+13** |
+
+## Excluded Test Fixtures
+
+| Extension | Tier | Reason |
+|-----------|------|--------|
+| base_fixtures | 3 | test-only fixture cluster with intentional negative entries; covered by shape tests, excluded from release-facing extension pass-rate claims |
 
 ## Fixes (was failing, now passing)
 
@@ -34,6 +41,7 @@
 | npm/aliou-pi-guardrails | 3 | Extension crashes during initialization (missing data, broken API, FS dependency). |
 | npm/aliou-pi-processes | 3 | Extension uses relative imports to unbundled sibling/parent modules. |
 | npm/aliou-pi-toolchain | 3 | Extension crashes during initialization (missing data, broken API, FS dependency). |
+| npm/marckrenn-pi-sub-core | 3 | Extension crashes during initialization (missing data, broken API, FS dependency). |
 | npm/pi-search-agent | 3 | Extension requires an npm package not available as a virtual module stub. |
 | npm/pi-wakatime | 3 | Extension requires an npm package not available as a virtual module stub. |
 | npm/pi-web-access | 3 | Extension requires an npm package not available as a virtual module stub. |

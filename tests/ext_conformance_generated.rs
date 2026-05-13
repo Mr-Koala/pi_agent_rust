@@ -4288,6 +4288,14 @@ struct ExtDelta {
     baseline_failure_reason: Option<String>,
 }
 
+/// Intentional exclusions from release-facing full-manifest health claims.
+#[derive(Debug, Clone, serde::Serialize)]
+struct ExtHealthExclusion {
+    id: String,
+    tier: u32,
+    reason: String,
+}
+
 /// Full health delta report.
 #[derive(Debug, serde::Serialize)]
 struct HealthDeltaReport {
@@ -4303,9 +4311,19 @@ struct HealthDeltaReport {
     new_extensions: Vec<ExtDelta>,
     removed_extensions: Vec<ExtDelta>,
     unchanged_failures: Vec<ExtDelta>,
+    excluded_extensions: Vec<ExtHealthExclusion>,
     total_regressions: usize,
     total_fixes: usize,
     net_change: i64,
+}
+
+fn health_delta_exclusion_reason(ext_id: &str) -> Option<&'static str> {
+    match ext_id {
+        "base_fixtures" => Some(
+            "test-only fixture cluster with intentional negative entries; covered by shape tests, excluded from release-facing extension pass-rate claims",
+        ),
+        _ => None,
+    }
 }
 
 /// Daily extension health and regression delta test.
@@ -4431,8 +4449,31 @@ fn conformance_health_delta() {
     let mut cur_pass = 0_usize;
     let mut cur_fail = 0_usize;
     let mut cur_skip = 0_usize;
+    let mut excluded_extensions: Vec<ExtHealthExclusion> = Vec::new();
 
     for (idx, entry) in manifest.extensions.iter().enumerate() {
+        if let Some(reason) = health_delta_exclusion_reason(&entry.id) {
+            cur_skip += 1;
+            eprintln!(
+                "  [{:>3}/{}] {:<50} EXCLUDE ({reason})",
+                idx + 1,
+                manifest.extensions.len(),
+                entry.id
+            );
+            current_statuses.push(ExtHealthStatus {
+                id: entry.id.clone(),
+                tier: entry.conformance_tier,
+                status: "skip".to_string(),
+                failure_reason: Some(reason.to_string()),
+            });
+            excluded_extensions.push(ExtHealthExclusion {
+                id: entry.id.clone(),
+                tier: entry.conformance_tier,
+                reason: reason.to_string(),
+            });
+            continue;
+        }
+
         let entry_file = artifacts_dir().join(&entry.entry_path);
         if !entry_file.exists() {
             cur_skip += 1;
@@ -4580,6 +4621,7 @@ fn conformance_health_delta() {
             "passed": cur_pass,
             "failed": cur_fail,
             "skipped": cur_skip,
+            "excluded": excluded_extensions.len(),
             "pass_rate_pct": cur_rate,
         }),
         baseline_summary: serde_json::json!({
@@ -4599,6 +4641,7 @@ fn conformance_health_delta() {
         new_extensions: new_extensions.clone(),
         removed_extensions: removed_extensions.clone(),
         unchanged_failures: unchanged_failures.clone(),
+        excluded_extensions: excluded_extensions.clone(),
         total_regressions,
         total_fixes,
         net_change,
@@ -4691,8 +4734,22 @@ fn conformance_health_delta() {
     let _ = writeln!(md, "| New extensions | {} |", new_extensions.len());
     let _ = writeln!(md, "| Removed | {} |", removed_extensions.len());
     let _ = writeln!(md, "| Unchanged failures | {} |", unchanged_failures.len());
+    let _ = writeln!(md, "| Excluded fixtures | {} |", excluded_extensions.len());
     let _ = writeln!(md, "| **Net change** | **{net_change:+}** |");
     md.push('\n');
+
+    if !excluded_extensions.is_empty() {
+        md.push_str("## Excluded Test Fixtures\n\n");
+        md.push_str("| Extension | Tier | Reason |\n|-----------|------|--------|\n");
+        for excluded in &excluded_extensions {
+            let _ = writeln!(
+                md,
+                "| {} | {} | {} |",
+                excluded.id, excluded.tier, excluded.reason
+            );
+        }
+        md.push('\n');
+    }
 
     if !regressions.is_empty() {
         md.push_str("## Regressions (was passing, now failing)\n\n");

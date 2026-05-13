@@ -1,77 +1,84 @@
 {
   "schema": "pi.ext.health_delta_failure_disposition.v1",
-  "generated_at": "2026-05-13T03:10:00Z",
+  "generated_at": "2026-05-13T03:38:48Z",
   "source_bead": "bd-d7v9g.6",
   "owner_bead": "bd-0bu83",
   "source_report": "tests/ext_conformance/reports/health_delta/health_delta_report.json",
-  "source_report_generated_at": "2026-05-13T03:07:06.361Z",
+  "source_report_generated_at": "2026-05-13T03:37:59.568Z",
   "source_report_current_summary": {
     "manifest_count": 224,
-    "tested": 224,
-    "passed": 219,
-    "failed": 5,
-    "skipped": 0,
-    "pass_rate_pct": 97.76785714285714
+    "tested": 223,
+    "passed": 223,
+    "failed": 0,
+    "skipped": 1,
+    "excluded": 1,
+    "pass_rate_pct": 100.0
   },
-  "remaining_failure_count": 5,
+  "remaining_failure_count": 0,
   "remaining_failure_owner": "bd-0bu83",
+  "resolved_by_bead": "bd-0bu83",
   "dispositions": [
     {
       "extension_id": "base_fixtures",
       "artifact_path": "tests/ext_conformance/artifacts/base_fixtures/negative_invalid_tool_schema/index.ts",
-      "source_report_bucket": "unchanged_failures",
+      "source_report_bucket": "excluded_extensions",
       "owner_bead": "bd-0bu83",
-      "current_status": "fail",
+      "current_status": "excluded",
       "failure_reason": "Load error: Extension error: registerTool: spec.name is required",
       "root_cause": "The manifest includes a test-only negative fixture whose purpose is to exercise invalid registerTool schema handling. It is not a real extension compatibility target and should not silently count as a production extension regression.",
-      "disposition": "followup_required",
-      "rationale": "bd-0bu83 owns deciding whether this negative fixture should move out of full-manifest health accounting or remain as an explicit non-pass fixture with separate wording."
+      "disposition": "resolved_intentional_exclusion",
+      "rationale": "The health-delta harness now reports this entry as an explicit excluded fixture, omits it from release-facing pass-rate claims, and records the exclusion in JSON and Markdown evidence."
     },
     {
       "extension_id": "npm/marckrenn-pi-sub-core",
       "artifact_path": "tests/ext_conformance/fixtures/npm__marckrenn-pi-sub-core.json",
-      "source_report_bucket": "unchanged_failures",
+      "source_report_bucket": "fixes",
       "owner_bead": "bd-0bu83",
-      "current_status": "fail",
+      "current_status": "pass",
       "failure_reason": "Manifest expects tools but none registered",
-      "root_cause": "The extension loads without registering the manifest-expected tool surface, indicating an initialization/runtime dependency gap.",
-      "disposition": "followup_required",
-      "rationale": "bd-0bu83 owns focused reproduction and either fixing the runtime gap or narrowing the fixture expectations."
+      "root_cause": "The checked default entrypoint only registers tools behind disabled usageTool/allUsageTool settings, so unconditional tool capability in the validated manifest was stale.",
+      "disposition": "resolved_manifest_expectation_corrected",
+      "rationale": "The validated manifest now marks registers_tools=false while preserving the command and event-handler expectations that are present by default."
     },
     {
       "extension_id": "third-party/marckrenn-pi-sub",
       "artifact_path": "tests/ext_conformance/fixtures/third-party__marckrenn-pi-sub.json",
       "source_report_bucket": "new_extensions",
       "owner_bead": "bd-0bu83",
-      "current_status": "fail",
+      "current_status": "pass",
       "failure_reason": "Manifest expects tools but none registered",
-      "root_cause": "The extension loads without registering the manifest-expected tool surface, indicating an initialization/runtime dependency gap.",
-      "disposition": "followup_required",
-      "rationale": "bd-0bu83 owns focused reproduction and either fixing the runtime gap or narrowing the fixture expectations."
+      "root_cause": "The checked default sub-bar entrypoint registers commands and event handlers, while sub-core usage tools are setting-gated and not present by default.",
+      "disposition": "resolved_manifest_expectation_corrected",
+      "rationale": "The validated manifest now marks registers_tools=false for the checked entrypoint, which matches the runtime default surface."
     },
     {
       "extension_id": "third-party/openclaw-openclaw",
       "artifact_path": "tests/ext_conformance/fixtures/third-party__openclaw-openclaw.json",
       "source_report_bucket": "new_extensions",
       "owner_bead": "bd-0bu83",
-      "current_status": "fail",
+      "current_status": "pass",
       "failure_reason": "Missing command 'files'. Actual: [\"diff\"]",
-      "root_cause": "The fixture or runtime exposes only the diff command while the manifest expects a files command as well.",
-      "disposition": "followup_required",
-      "rationale": "bd-0bu83 owns focused reproduction and deciding whether the command registration or manifest expectation is incorrect."
+      "root_cause": "The checked entrypoint is extensions/diff.ts and registers the diff command only; files and tui are sibling entrypoints, not the active entrypoint for this manifest row.",
+      "disposition": "resolved_fixture_and_manifest_expectation_corrected",
+      "rationale": "The validated manifest and fixture now expect only the command exposed by the checked entrypoint."
     },
     {
       "extension_id": "third-party/w-winter-dot314",
       "artifact_path": "tests/ext_conformance/fixtures/third-party__w-winter-dot314.json",
       "source_report_bucket": "new_extensions",
       "owner_bead": "bd-0bu83",
-      "current_status": "fail",
+      "current_status": "pass",
       "failure_reason": "Missing command 'skill'. Actual command inventory includes code, files, rp, sandbox, branch, and related commands.",
-      "root_cause": "The fixture or runtime no longer exposes the manifest-expected skill command even though many adjacent commands register successfully.",
-      "disposition": "followup_required",
-      "rationale": "bd-0bu83 owns focused reproduction and deciding whether the command registration or manifest expectation is incorrect."
+      "root_cause": "The checked agentic-compaction entrypoint does not import the separate skill-palette or brave-search entrypoints that register skill and ws.",
+      "disposition": "resolved_manifest_expectation_corrected",
+      "rationale": "The validated manifest now removes stale skill/ws expectations from this entrypoint while retaining the commands that the checked entrypoint actually registers."
     }
   ],
+  "validation": {
+    "health_delta_command": "env RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,TMPDIR CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex-cli-bd-0bu83/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex-cli-bd-0bu83/tmp rch exec -- cargo test --test ext_conformance_generated --features ext-conformance -- conformance_health_delta --nocapture --exact",
+    "health_delta_result": "PASS: 223/223 tested extensions passed, 0 failures, 0 regressions, 13 fixes, 1 excluded fixture",
+    "final_report_check": "PASS: tracked health-delta reports on disk have source_report_generated_at=2026-05-13T03:37:59.568Z and current_summary.failed=0"
+  },
   "redaction": {
     "contains_extension_output": false,
     "contains_secrets": false,

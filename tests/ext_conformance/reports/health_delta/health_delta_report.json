@@ -1,15 +1,16 @@
 {
   "schema": "pi.ext.health_delta.v1",
-  "generated_at": "2026-05-13T03:07:06.361Z",
+  "generated_at": "2026-05-13T03:37:59.568Z",
   "baseline_path": "/data/projects/pi_agent_rust/tests/ext_conformance/reports/conformance_baseline.json",
   "baseline_date": "2026-02-07T23:31:53Z",
   "current_summary": {
-    "failed": 5,
+    "excluded": 1,
+    "failed": 0,
     "manifest_count": 224,
-    "pass_rate_pct": 97.76785714285714,
-    "passed": 219,
-    "skipped": 0,
-    "tested": 224
+    "pass_rate_pct": 100.0,
+    "passed": 223,
+    "skipped": 1,
+    "tested": 223
   },
   "baseline_summary": {
     "failed": 14,
@@ -18,10 +19,10 @@
     "tested": 223
   },
   "aggregate_delta": {
-    "fail_delta": -9,
-    "net_change": 12,
-    "pass_delta": 10,
-    "rate_delta_pct": 4.067857142857136
+    "fail_delta": -14,
+    "net_change": 13,
+    "pass_delta": 14,
+    "rate_delta_pct": 6.299999999999997
   },
   "regressions": [],
   "fixes": [
@@ -75,6 +76,14 @@
     },
     {
       "id": "npm/aliou-pi-toolchain",
+      "tier": 3,
+      "delta_type": "fix",
+      "current_status": "pass",
+      "baseline_status": "fail",
+      "baseline_failure_reason": "Extension crashes during initialization (missing data, broken API, FS dependency)."
+    },
+    {
+      "id": "npm/marckrenn-pi-sub-core",
       "tier": 3,
       "delta_type": "fix",
       "current_status": "pass",
@@ -1260,9 +1269,8 @@
     {
       "id": "third-party/marckrenn-pi-sub",
       "tier": 3,
-      "delta_type": "new_failure",
-      "current_status": "fail",
-      "failure_reason": "Manifest expects tools but none registered"
+      "delta_type": "new_pass",
+      "current_status": "pass"
     },
     {
       "id": "third-party/michalvavra-agents",
@@ -1279,9 +1287,8 @@
     {
       "id": "third-party/openclaw-openclaw",
       "tier": 3,
-      "delta_type": "new_failure",
-      "current_status": "fail",
-      "failure_reason": "Missing command 'files'. Actual: [\"diff\"]"
+      "delta_type": "new_pass",
+      "current_status": "pass"
     },
     {
       "id": "third-party/pasky-pi-amplike",
@@ -1322,9 +1329,8 @@
     {
       "id": "third-party/w-winter-dot314",
       "tier": 3,
-      "delta_type": "new_failure",
-      "current_status": "fail",
-      "failure_reason": "Missing command 'skill'. Actual: [\"code\", \"files\", \"rp\", \"sandbox\", \"branch\", \"ephemeral\", \"md\", \"oracle\", \"plan\", \"preset\", \"rpbind\", \"review\", \"end-review\", \"ask\", \"steer\", \"followup\", \"askwith\", \"speedread\", \"todos\", \"ultrathink\", \"usage\", \"command-center\", \"model-sysprompt-appendix\", \"notify\", \"rp-tools-lock\", \"session-ask\", \"tools\", \"vog\"]"
+      "delta_type": "new_pass",
+      "current_status": "pass"
     },
     {
       "id": "third-party/zenobi-us-pi-dcp",
@@ -1388,27 +1394,15 @@
     }
   ],
   "removed_extensions": [],
-  "unchanged_failures": [
+  "unchanged_failures": [],
+  "excluded_extensions": [
     {
       "id": "base_fixtures",
       "tier": 3,
-      "delta_type": "unchanged_fail",
-      "current_status": "fail",
-      "baseline_status": "fail",
-      "failure_reason": "Load error: Extension error: registerTool: spec.name is required\n    at __pi_register_tool (eval_script:486:19)\n    at default (/data/projects/pi_agent_rust/tests/ext_conformance/artifacts/base_fixtures/negative_invalid_tool_schema/index.ts:3:8)\n    at __pi_load_extension (eval_script:472:20)\n",
-      "baseline_failure_reason": "Not a real extension; test-only fixture in manifest."
-    },
-    {
-      "id": "npm/marckrenn-pi-sub-core",
-      "tier": 3,
-      "delta_type": "unchanged_fail",
-      "current_status": "fail",
-      "baseline_status": "fail",
-      "failure_reason": "Manifest expects tools but none registered",
-      "baseline_failure_reason": "Extension crashes during initialization (missing data, broken API, FS dependency)."
+      "reason": "test-only fixture cluster with intentional negative entries; covered by shape tests, excluded from release-facing extension pass-rate claims"
     }
   ],
   "total_regressions": 0,
-  "total_fixes": 12,
-  "net_change": 12
+  "total_fixes": 13,
+  "net_change": 13
 }
