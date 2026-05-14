@@ -7766,6 +7766,99 @@ function failClosedBridge(name, cause) {
   throw new Error(`@mariozechner/pi-ai.${name} is not available in PiJS without a provider/session host bridge; refusing to return placeholder data${suffix}`);
 }
 
+const __piBuiltinModelRegistry = {
+  "openai-codex": [
+    {
+      id: "gpt-5.5",
+      name: "GPT-5.5 Codex",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+    {
+      id: "gpt-5.4",
+      name: "GPT-5.4 Codex",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 272000,
+      maxTokens: 128000,
+    },
+    {
+      id: "gpt-5.3-codex",
+      name: "GPT-5.3 Codex",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 272000,
+      maxTokens: 128000,
+    },
+    {
+      id: "gpt-5.3-codex-spark",
+      name: "GPT-5.3 Codex Spark",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 272000,
+      maxTokens: 128000,
+    },
+    {
+      id: "gpt-5.2-codex",
+      name: "GPT-5.2 Codex",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 272000,
+      maxTokens: 128000,
+    },
+  ],
+};
+
+const __piKnownApiIds = new Set([
+  "anthropic-messages",
+  "openai-completions",
+  "openai-responses",
+  "openai-codex-responses",
+  "azure-openai-responses",
+  "bedrock-converse-stream",
+  "google-generative-ai",
+  "google-gemini-cli",
+  "google-vertex",
+]);
+
+function cloneModel(model) {
+  return {
+    ...model,
+    input: Array.isArray(model.input) ? model.input.slice() : [],
+    cost: model.cost && typeof model.cost === "object" ? { ...model.cost } : {},
+    headers: model.headers && typeof model.headers === "object" ? { ...model.headers } : undefined,
+  };
+}
+
+function modelsForProvider(provider) {
+  const providerId = String(provider ?? "").trim();
+  if (!providerId) return [];
+  const models = __piBuiltinModelRegistry[providerId] || [];
+  return models.map(cloneModel);
+}
+
 async function callProviderBridge(name, op, payload = {}) {
   if (!globalThis.pi || typeof globalThis.pi.events !== "function") {
     failClosedBridge(name);
@@ -7813,9 +7906,124 @@ export function getOAuthApiKey(_provider) {
 }
 
 export function createAssistantMessageEventStream() {
+  let done = false;
+  const queue = [];
+  const waiters = [];
+  let resolveFinalResult;
+  const finalResult = new Promise((resolve) => {
+    resolveFinalResult = resolve;
+  });
+
   return {
-    push: () => {},
-    end: () => {},
+    push: (event) => {
+      if (done) return;
+      if (event && (event.type === "done" || event.type === "error")) {
+        done = true;
+        resolveFinalResult(event.type === "done" ? event.message : event.error);
+      }
+      const waiter = waiters.shift();
+      if (waiter) {
+        waiter({ value: event, done: false });
+      } else {
+        queue.push(event);
+      }
+    },
+    end: (result) => {
+      if (done && result === undefined) return;
+      done = true;
+      if (result !== undefined) {
+        resolveFinalResult(result);
+      }
+      while (waiters.length > 0) {
+        const waiter = waiters.shift();
+        waiter({ value: undefined, done: true });
+      }
+    },
+    async *[Symbol.asyncIterator]() {
+      while (true) {
+        if (queue.length > 0) {
+          yield queue.shift();
+        } else if (done) {
+          return;
+        } else {
+          const result = await new Promise((resolve) => waiters.push(resolve));
+          if (result.done) return;
+          yield result.value;
+        }
+      }
+    },
+    result: () => finalResult,
+  };
+}
+
+function assistantMessageFor(model, text, result) {
+  const modelObj = model && typeof model === "object" ? model : {};
+  const resultObj = result && typeof result === "object" ? result : {};
+  const usageObj = resultObj.usage && typeof resultObj.usage === "object" ? resultObj.usage : {};
+  const usageCost = usageObj.cost && typeof usageObj.cost === "object" ? usageObj.cost : {};
+  return {
+    role: "assistant",
+    content: text ? [{ type: "text", text }] : [],
+    api: modelObj.api || "",
+    provider: modelObj.provider || "",
+    model: modelObj.id || modelObj.modelId || (typeof model === "string" ? model : ""),
+    usage: {
+      input: Number(usageObj.input ?? 0),
+      output: Number(usageObj.output ?? 0),
+      cacheRead: Number(usageObj.cacheRead ?? usageObj.cache_read ?? 0),
+      cacheWrite: Number(usageObj.cacheWrite ?? usageObj.cache_write ?? 0),
+      totalTokens: Number(usageObj.totalTokens ?? usageObj.total_tokens ?? 0),
+      cost: {
+        input: Number(usageCost.input ?? 0),
+        output: Number(usageCost.output ?? 0),
+        cacheRead: Number(usageCost.cacheRead ?? usageCost.cache_read ?? 0),
+        cacheWrite: Number(usageCost.cacheWrite ?? usageCost.cache_write ?? 0),
+        total: Number(usageCost.total ?? 0),
+      },
+    },
+    stopReason: resultObj.stopReason || resultObj.stop_reason || "stop",
+    timestamp: Number(resultObj.timestamp ?? Date.now()),
+  };
+}
+
+function providerBridgeStream(name, model, context, opts = {}, simple = true) {
+  const stream = createAssistantMessageEventStream();
+  (async () => {
+    try {
+      const result = await callProviderBridge(name, "completeAi", {
+        model,
+        context,
+        options: opts || {},
+        simple,
+      });
+      const text = completionText(result);
+      if (text) {
+        stream.push({ type: "text_delta", delta: text });
+      }
+      const message =
+        result && typeof result === "object" && result.message && typeof result.message === "object"
+          ? result.message
+          : assistantMessageFor(model, text, result);
+      stream.push({ type: "done", message });
+    } catch (error) {
+      const message = assistantMessageFor(model, "", {});
+      message.stopReason = "error";
+      message.errorMessage = String((error && error.message) || error || "");
+      stream.push({ type: "error", reason: "error", error: message });
+    }
+  })();
+  return stream;
+}
+
+function apiProviderBridge(api) {
+  const apiId = String(api ?? "").trim();
+  if (!apiId || !__piKnownApiIds.has(apiId)) return undefined;
+  return {
+    api: apiId,
+    stream: (model, context, opts = {}) =>
+      providerBridgeStream(`getApiProvider(${apiId}).stream`, model, context, opts, false),
+    streamSimple: (model, context, opts = {}) =>
+      providerBridgeStream(`getApiProvider(${apiId}).streamSimple`, model, context, opts, true),
   };
 }
 
@@ -7861,19 +8069,37 @@ export async function completeSimple(model, prompt, opts = {}) {
   });
 }
 
-export async function getModel() {
-  await callProviderBridge("getModel", "getModels", {});
-  return await callProviderBridge("getModel", "getModel", {});
+export function getProviders() {
+  return Object.keys(__piBuiltinModelRegistry);
 }
 
-export async function getApiProvider() {
-  await callProviderBridge("getApiProvider", "getModels", {});
-  const model = await callProviderBridge("getApiProvider", "getModel", {});
-  return model && typeof model === "object" ? model.provider : undefined;
+export function getModel(provider, modelId) {
+  if (arguments.length >= 2) {
+    const modelKey = String(modelId ?? "").trim().toLowerCase();
+    return modelsForProvider(provider).find((model) => model.id.toLowerCase() === modelKey);
+  }
+  return (async () => {
+    await callProviderBridge("getModel", "getModels", {});
+    return await callProviderBridge("getModel", "getModel", {});
+  })();
 }
 
-export async function getModels() {
-  return await callProviderBridge("getModels", "getModels", {});
+export function getApiProvider(api) {
+  if (arguments.length >= 1) {
+    return apiProviderBridge(api);
+  }
+  return (async () => {
+    await callProviderBridge("getApiProvider", "getModels", {});
+    const model = await callProviderBridge("getApiProvider", "getModel", {});
+    return model && typeof model === "object" ? model.provider : undefined;
+  })();
+}
+
+export function getModels(provider) {
+  if (arguments.length >= 1) {
+    return modelsForProvider(provider);
+  }
+  return callProviderBridge("getModels", "getModels", {});
 }
 
 export async function loginOpenAICodex(_opts = {}) {
@@ -7884,7 +8110,7 @@ export async function refreshOpenAICodexToken(_refreshToken) {
   failClosedUnsupported("refreshOpenAICodexToken");
 }
 
-export default { StringEnum, calculateCost, getEnvApiKey, getOAuthApiKey, createAssistantMessageEventStream, streamSimpleAnthropic, streamSimpleOpenAIResponses, streamSimpleOpenAICompletions, complete, completeSimple, getModel, getApiProvider, getModels, loginOpenAICodex, refreshOpenAICodexToken };
+export default { StringEnum, calculateCost, getEnvApiKey, getOAuthApiKey, createAssistantMessageEventStream, streamSimpleAnthropic, streamSimpleOpenAIResponses, streamSimpleOpenAICompletions, complete, completeSimple, getProviders, getModel, getApiProvider, getModels, loginOpenAICodex, refreshOpenAICodexToken };
 "#
         .trim()
         .to_string(),
@@ -27700,6 +27926,145 @@ export const bundled = globalThis.__doomWadFinderProbe.bundled;
                     "{name} error should be fail-closed, got {message:?}"
                 );
             }
+        });
+    }
+
+    #[test]
+    fn pijs_pi_ai_codex_registry_helpers_are_sync() {
+        futures::executor::block_on(async {
+            let clock = Arc::new(DeterministicClock::new(0));
+            let runtime = PiJsRuntime::with_clock(Arc::clone(&clock))
+                .await
+                .expect("create runtime");
+
+            runtime
+                .eval(
+                    r#"
+                    globalThis.piAiCodexRegistry = {};
+                    (async () => {
+                        const ai = await import('@mariozechner/pi-ai');
+                        const providers = ai.getProviders();
+                        const models = ai.getModels("openai-codex");
+                        const first = models[0];
+                        const model = ai.getModel("openai-codex", first.id);
+                        const apiProvider = ai.getApiProvider("openai-codex-responses");
+                        globalThis.piAiCodexRegistry = {
+                            done: true,
+                            providers,
+                            modelsIsArray: Array.isArray(models),
+                            modelCount: models.length,
+                            firstProvider: first.provider,
+                            firstApi: first.api,
+                            firstBaseUrl: first.baseUrl,
+                            modelId: model && model.id,
+                            providerApi: apiProvider && apiProvider.api,
+                            streamType: typeof (apiProvider && apiProvider.stream),
+                            streamSimpleType: typeof (apiProvider && apiProvider.streamSimple),
+                        };
+                    })().catch((e) => {
+                        globalThis.piAiCodexRegistry.error = String((e && e.message) || e || "");
+                        globalThis.piAiCodexRegistry.done = true;
+                    });
+                    "#,
+                )
+                .await
+                .expect("eval pi-ai codex registry helpers");
+
+            drain_until_idle(&runtime, &clock).await;
+            assert!(
+                runtime.drain_hostcall_requests().is_empty(),
+                "synchronous registry helpers should not require hostcalls"
+            );
+
+            let r = get_global_json(&runtime, "piAiCodexRegistry").await;
+            assert_eq!(r["done"], json!(true));
+            assert_eq!(r["error"], serde_json::Value::Null);
+            assert_eq!(r["providers"][0], json!("openai-codex"));
+            assert_eq!(r["modelsIsArray"], json!(true));
+            assert!(
+                r["modelCount"].as_u64().unwrap_or(0) >= 1,
+                "openai-codex registry should expose at least one model: {r:?}"
+            );
+            assert_eq!(r["firstProvider"], json!("openai-codex"));
+            assert_eq!(r["firstApi"], json!("openai-codex-responses"));
+            assert_eq!(r["firstBaseUrl"], json!("https://chatgpt.com/backend-api"));
+            assert_eq!(r["providerApi"], json!("openai-codex-responses"));
+            assert_eq!(r["streamType"], json!("function"));
+            assert_eq!(r["streamSimpleType"], json!("function"));
+            assert_eq!(r["modelId"], json!("gpt-5.5"));
+        });
+    }
+
+    #[test]
+    fn pijs_pi_ai_assistant_message_event_stream_iterates_events() {
+        futures::executor::block_on(async {
+            let clock = Arc::new(DeterministicClock::new(0));
+            let runtime = PiJsRuntime::with_clock(Arc::clone(&clock))
+                .await
+                .expect("create runtime");
+
+            runtime
+                .eval(
+                    r#"
+                    globalThis.piAiEventStream = {};
+                    (async () => {
+                        const ai = await import('@mariozechner/pi-ai');
+                        const stream = ai.createAssistantMessageEventStream();
+                        const seen = [];
+                        const consumer = (async () => {
+                            for await (const event of stream) {
+                                seen.push(event.type);
+                            }
+                        })();
+                        stream.push({ type: "text_delta", delta: "hi" });
+                        stream.push({
+                            type: "done",
+                            message: {
+                                role: "assistant",
+                                content: [],
+                                api: "openai-codex-responses",
+                                provider: "openai-codex",
+                                model: "gpt-5.5",
+                                usage: {
+                                    input: 0,
+                                    output: 0,
+                                    cacheRead: 0,
+                                    cacheWrite: 0,
+                                    totalTokens: 0,
+                                    cost: {
+                                        input: 0,
+                                        output: 0,
+                                        cacheRead: 0,
+                                        cacheWrite: 0,
+                                        total: 0,
+                                    },
+                                },
+                                stopReason: "stop",
+                                timestamp: 1,
+                            },
+                        });
+                        await consumer;
+                        const result = await stream.result();
+                        globalThis.piAiEventStream = {
+                            done: true,
+                            seen,
+                            resultModel: result.model,
+                        };
+                    })().catch((e) => {
+                        globalThis.piAiEventStream.error = String((e && e.message) || e || "");
+                        globalThis.piAiEventStream.done = true;
+                    });
+                    "#,
+                )
+                .await
+                .expect("eval pi-ai assistant message event stream");
+
+            drain_until_idle(&runtime, &clock).await;
+            let r = get_global_json(&runtime, "piAiEventStream").await;
+            assert_eq!(r["done"], json!(true));
+            assert_eq!(r["error"], serde_json::Value::Null);
+            assert_eq!(r["seen"], json!(["text_delta", "done"]));
+            assert_eq!(r["resultModel"], json!("gpt-5.5"));
         });
     }
 

@@ -181,10 +181,13 @@ The Pi SDK virtual module provides the primary extension API surface.
 | `getOAuthApiKey(provider)` | Function | Unsupported in PiJS; fails closed |
 | `complete(model, messages, opts)` | Function | Unsupported in PiJS without a provider host bridge; fails closed |
 | `completeSimple(model, prompt, opts)` | Function | Unsupported in PiJS without a provider host bridge; fails closed |
+| `createAssistantMessageEventStream()` | Function | Async-iterable assistant event stream factory for extension providers |
 | `streamSimpleAnthropic()` | Function | Unsupported in PiJS without a provider host bridge; fails closed |
 | `streamSimpleOpenAIResponses()` | Function | Unsupported in PiJS without a provider host bridge; fails closed |
 | `streamSimpleOpenAICompletions()` | Function | Unsupported in PiJS without a provider host bridge; fails closed |
-| `getModel()`, `getApiProvider()`, `getModels()` | Functions | Unsupported in PiJS without session/model host context; fail closed |
+| `getProviders()`, `getModel(provider, modelId)`, `getModels(provider)` | Functions | Synchronous built-in registry lookup for bundled provider metadata; currently includes OpenAI Codex models needed by extension provider mirrors |
+| `getApiProvider(api)` | Function | Synchronous provider bridge for known API IDs; stream calls route through the host provider bridge and fail closed if unavailable |
+| `getModel()`, `getApiProvider()`, `getModels()` with no lookup arguments | Functions | Session/model host-context helpers; fail closed when no host bridge is configured |
 
 ## Conformance Status
 
