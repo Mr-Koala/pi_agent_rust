@@ -1,0 +1,404 @@
+{
+  "schema": "pi.validation_broker.contract.v1",
+  "request_schema": "pi.validation_broker.request.v1",
+  "slot_schema": "pi.validation_broker.slot.v1",
+  "decision_schema": "pi.validation_broker.decision.v1",
+  "contract_version": "1.0.0",
+  "bead_id": "bd-gusp4.1",
+  "parent_bead_id": "bd-gusp4",
+  "purpose": "live_validation_admission_advisory_not_ci_or_rch_replacement",
+  "summary": "Defines the source inventory and machine contract for an advisory validation slot broker. The broker helps agents decide whether to run, wait, narrow, coalesce, or recover validation work; it does not replace RCH, cargo_headroom.sh, Beads, Agent Mail, Doctor, runpacks, CI, UBS, or required repo gates.",
+  "non_goals": [
+    "replace_rch_or_run_cargo_without_explicit_agent_action",
+    "replace_cargo_headroom_or_doctor_resource_preflight",
+    "replace_beads_or_agent_mail_as_sources_of_truth",
+    "replace_ci_or_release_claim_integrity_gates",
+    "suppress_required_cargo_clippy_fmt_ubs_or_ledger_checks",
+    "treat_reused_validation_evidence_as_green_when_provenance_mismatches",
+    "infer_missing_source_facts_without_degraded_uncertainty",
+    "delete_logs_sessions_mail_archives_build_artifacts_or_user_files"
+  ],
+  "required_source_ids": [
+    "beads_jsonl",
+    "beads_db",
+    "agent_mail_reservations",
+    "rch_status",
+    "rch_queue",
+    "cargo_headroom_preflight",
+    "doctor_swarm_preflight",
+    "git_status",
+    "validation_artifact_manifest",
+    "cargo_command_request",
+    "agent_identity"
+  ],
+  "source_status_contract": {
+    "required_fields": [
+      "source_id",
+      "source_kind",
+      "path",
+      "availability",
+      "freshness_state",
+      "observed_at_utc",
+      "source_hash",
+      "authoritative_for",
+      "redaction_state",
+      "degraded_reasons",
+      "suppressed_claims"
+    ],
+    "allowed_availability": [
+      "available",
+      "unavailable",
+      "partial",
+      "malformed",
+      "stale",
+      "not_configured"
+    ],
+    "allowed_freshness_states": [
+      "current",
+      "stale",
+      "missing",
+      "malformed",
+      "freshness_unknown"
+    ],
+    "missing_source_policy": "Missing, malformed, unavailable, partial, stale, or freshness_unknown sources must remain explicit source_status rows. The broker must not infer or invent facts from missing inputs. Decisions that depend on missing authority must be degraded_block, wait, narrow, or stale_recover; they must not become allow or coalesce.",
+    "minimum_required_authority_for_allow": [
+      "cargo_command_request",
+      "git_status",
+      "cargo_headroom_preflight",
+      "rch_status",
+      "rch_queue",
+      "validation_artifact_manifest"
+    ]
+  },
+  "authoritative_source_boundaries": [
+    {
+      "source_id": "beads_jsonl",
+      "authoritative_for": [
+        "issue_status",
+        "priority",
+        "dependencies",
+        "assignee"
+      ],
+      "broker_boundary": "May prioritize and label validation requests; must not claim, close, reopen, or rewrite Beads except through explicit br workflow outside read-only plan mode."
+    },
+    {
+      "source_id": "agent_mail_reservations",
+      "authoritative_for": [
+        "file_reservation_intent",
+        "build_slot_claims",
+        "agent_coordination_messages"
+      ],
+      "broker_boundary": "May report reservation conflicts and unavailable mail; must not treat Agent Mail absence as permission to collide with active Beads or dirty files."
+    },
+    {
+      "source_id": "rch_status",
+      "authoritative_for": [
+        "worker_availability",
+        "remote_offload_health"
+      ],
+      "broker_boundary": "May advise backoff or remote-only validation; must not replace RCH scheduling or hide fail-open local execution."
+    },
+    {
+      "source_id": "cargo_headroom_preflight",
+      "authoritative_for": [
+        "target_dir_headroom",
+        "tmpdir_headroom",
+        "repo_target_rejection"
+      ],
+      "broker_boundary": "May deny or narrow local validation when scratch space is unsafe; must not bypass cargo_headroom.sh safeguards."
+    },
+    {
+      "source_id": "doctor_swarm_preflight",
+      "authoritative_for": [
+        "cgroup_cpu",
+        "cpuset_size",
+        "memory_limit",
+        "numa_topology",
+        "recommended_budgets"
+      ],
+      "broker_boundary": "May consume budgets and caveats; must not replace Doctor diagnostics or resource evidence."
+    },
+    {
+      "source_id": "git_status",
+      "authoritative_for": [
+        "head_commit",
+        "branch",
+        "dirty_paths",
+        "staged_paths"
+      ],
+      "broker_boundary": "May reject reusable evidence when git identity or dirty-path scope differs; must not stash, reset, clean, or checkout files."
+    },
+    {
+      "source_id": "validation_artifact_manifest",
+      "authoritative_for": [
+        "command_exit_code",
+        "artifact_paths",
+        "artifact_hashes",
+        "runner_identity",
+        "feature_flags"
+      ],
+      "broker_boundary": "May coalesce only when provenance matches; must not convert absent or failed artifacts into success."
+    }
+  ],
+  "request_contract": {
+    "required_top_level_keys": [
+      "schema",
+      "request_id",
+      "generated_at",
+      "agent_name",
+      "bead_id",
+      "cwd",
+      "git_head",
+      "command",
+      "command_class",
+      "requested_scope",
+      "feature_flags",
+      "target_dir",
+      "tmpdir",
+      "runner_requirement",
+      "dirty_worktree_policy",
+      "evidence_requirements"
+    ],
+    "allowed_command_classes": [
+      "cargo_check",
+      "cargo_clippy",
+      "cargo_test",
+      "cargo_fmt_check",
+      "ubs_staged",
+      "beads_ledger_reconcile",
+      "script_self_test",
+      "custom_validation"
+    ],
+    "allowed_runner_requirements": [
+      "rch_required",
+      "local_allowed",
+      "read_only",
+      "no_compile"
+    ],
+    "dirty_worktree_policy": "Requests must declare whether unrelated dirty paths are allowed, forbidden, or ignored. Reusable evidence must name dirty-path scope so agents do not accidentally rely on validation over a different working tree."
+  },
+  "slot_lease_contract": {
+    "required_top_level_keys": [
+      "schema",
+      "slot_id",
+      "state",
+      "owner_agent",
+      "bead_id",
+      "command_fingerprint",
+      "environment_fingerprint",
+      "git_head",
+      "target_dir",
+      "tmpdir",
+      "runner",
+      "rch_job_id",
+      "started_at_utc",
+      "heartbeat_at_utc",
+      "expires_at_utc",
+      "artifacts",
+      "release_reason"
+    ],
+    "allowed_states": [
+      "requested",
+      "active",
+      "reusable",
+      "stale",
+      "failed",
+      "released",
+      "expired",
+      "degraded"
+    ],
+    "stale_policy": {
+      "heartbeat_required": true,
+      "stale_requires_explicit_reason": true,
+      "stale_recovery_must_not_kill_processes": true,
+      "safe_next_actions": [
+        "wait_for_owner",
+        "request_owner_update",
+        "open_new_non_overlapping_slot",
+        "surface_blocker",
+        "rerun_after_provenance_mismatch"
+      ]
+    }
+  },
+  "decision_contract": {
+    "required_top_level_keys": [
+      "schema",
+      "decision_id",
+      "request_id",
+      "generated_at",
+      "decision",
+      "confidence",
+      "reasons",
+      "source_statuses",
+      "required_actions",
+      "reusable_slot",
+      "suppressed_claims",
+      "no_claims"
+    ],
+    "allowed_decisions": [
+      "allow",
+      "wait",
+      "coalesce",
+      "narrow",
+      "deny_local_fallback",
+      "stale_recover",
+      "degraded_block"
+    ],
+    "coalescing_equivalence_fields": [
+      "command_fingerprint",
+      "cwd",
+      "git_head",
+      "feature_flags",
+      "target_dir",
+      "tmpdir",
+      "runner",
+      "rust_toolchain",
+      "environment_fingerprint",
+      "artifact_schema",
+      "artifact_hash"
+    ],
+    "required_no_claims": [
+      "not_ci_success",
+      "not_release_performance_evidence",
+      "not_dropin_certification_evidence",
+      "not_permission_to_skip_required_gates",
+      "not_permission_to_modify_other_agents_files"
+    ]
+  },
+  "mutation_policy": {
+    "plan_mode_live_mutation_allowed": false,
+    "lease_mode_allowed_mutations": [
+      "append_slot_record",
+      "renew_own_slot",
+      "release_own_slot",
+      "record_decision_artifact"
+    ],
+    "forbidden_mutations": [
+      "git_reset",
+      "git_clean",
+      "file_delete",
+      "kill_other_agent_process",
+      "stash_or_checkout_other_agent_work",
+      "rewrite_mail_archive",
+      "rewrite_beads_without_br"
+    ]
+  },
+  "redaction_contract": {
+    "required_redacted_classes": [
+      "api_key",
+      "bearer_token",
+      "oauth_token",
+      "mail_body",
+      "private_prompt",
+      "absolute_home_path_when_not_needed",
+      "large_command_output_body"
+    ],
+    "safe_to_record": [
+      "command_argv_fingerprint",
+      "exit_code",
+      "duration_ms",
+      "artifact_path",
+      "artifact_sha256",
+      "source_status",
+      "degraded_reason",
+      "bead_id"
+    ]
+  },
+  "overlap_boundaries": [
+    {
+      "surface": "rch",
+      "boundary": "Broker may advise and coalesce validation requests, but RCH remains the remote execution system and worker source of truth."
+    },
+    {
+      "surface": "cargo_headroom",
+      "boundary": "Broker may consume preflight output, but cargo_headroom.sh remains the scratch-space guard for cargo commands."
+    },
+    {
+      "surface": "doctor",
+      "boundary": "Broker may project advisory posture into Doctor, but Doctor remains the environment diagnostic authority."
+    },
+    {
+      "surface": "runpack",
+      "boundary": "Broker may contribute handoff summaries, but runpacks remain operator bundles and not release-claim evidence."
+    },
+    {
+      "surface": "swarm_replay_lab",
+      "boundary": "Broker decisions may later be replayed offline, but this contract defines live advisory admission rather than replay simulation."
+    },
+    {
+      "surface": "ci",
+      "boundary": "Broker output is never CI success and cannot replace required release or claim-integrity gates."
+    }
+  ],
+  "must_requirements": [
+    {
+      "id": "VALIDBROKER-MUST-001",
+      "description": "The contract declares advisory purpose and replacement boundaries for RCH, cargo_headroom, Beads, Agent Mail, Doctor, runpacks, CI, UBS, and repo gates.",
+      "validated_by": [
+        "purpose",
+        "non_goals",
+        "overlap_boundaries"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-002",
+      "description": "Every authoritative source has an explicit source_status shape with availability, freshness, hash, authority, redaction, degraded reasons, and suppressed claims.",
+      "validated_by": [
+        "required_source_ids",
+        "source_status_contract"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-003",
+      "description": "Missing, malformed, stale, partial, or unavailable sources fail closed and cannot be inferred into allow or coalesce decisions.",
+      "validated_by": [
+        "source_status_contract.missing_source_policy",
+        "decision_contract.allowed_decisions"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-004",
+      "description": "Validation requests carry command, scope, git, target/tmp, runner, dirty-worktree, and evidence requirements before admission.",
+      "validated_by": [
+        "request_contract.required_top_level_keys"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-005",
+      "description": "Slot leases preserve command/environment fingerprints, owner, heartbeat, expiry, artifacts, and safe stale recovery states.",
+      "validated_by": [
+        "slot_lease_contract.required_top_level_keys",
+        "slot_lease_contract.allowed_states",
+        "slot_lease_contract.stale_policy"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-006",
+      "description": "Coalesced gates require matching command, git, feature, target/tmp, runner, toolchain, environment, schema, and artifact hashes.",
+      "validated_by": [
+        "decision_contract.coalescing_equivalence_fields"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-007",
+      "description": "Plan mode is read-only and forbidden mutations include destructive git/filesystem actions, killing other agents' processes, and rewriting sources without their normal tools.",
+      "validated_by": [
+        "mutation_policy"
+      ]
+    },
+    {
+      "id": "VALIDBROKER-MUST-008",
+      "description": "Broker evidence redacts secrets, mail bodies, private prompts, unnecessary home paths, and large command output bodies while preserving fingerprints and exit metadata.",
+      "validated_by": [
+        "redaction_contract"
+      ]
+    }
+  ],
+  "downstream_dependencies": {
+    "unblocked_by_this_contract": [
+      "bd-gusp4.2",
+      "bd-gusp4.3"
+    ],
+    "final_closeout_bead": "bd-gusp4.11"
+  }
+}
