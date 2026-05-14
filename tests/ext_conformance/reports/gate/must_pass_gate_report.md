@@ -1,8 +1,8 @@
 # Must-Pass Extension CI Gate Report
 
-> Generated: 2026-05-13T03:56:46Z
-> Run ID: local-20260513T035606472Z
-> Correlation ID: must-pass-gate-local-20260513T035606472Z
+> Generated: 2026-05-14T19:58:04Z
+> Run ID: local-20260514T195723007Z
+> Correlation ID: must-pass-gate-local-20260514T195723007Z
 > Mode: strict
 
 ## Gate Verdict
@@ -31,7 +31,7 @@
 |--------|-------|
 | Total | 101 |
 | Tested | 101 |
-| Passed | 100 |
-| Failed | 1 |
+| Passed | 99 |
+| Failed | 2 |
 | Skipped | 0 |
 
