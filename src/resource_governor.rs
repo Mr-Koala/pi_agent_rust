@@ -3379,8 +3379,8 @@ const fn read_open_files_soft_limit() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmissionAction, HostResourceBudgets, HostResourceSample, ResourceDimension,
-        ResourceGovernor, ResourceOperationKind, ResourceRequest,
+        AdmissionAction, AdmissionDecision, HostResourceBudgets, HostResourceSample,
+        ResourceDimension, ResourceGovernor, ResourceOperationKind, ResourceRequest,
         SWARM_ADMISSION_CONTROLLER_SCHEMA, SWARM_ADMISSION_REPLAY_DIGEST_ALIGNMENT_SCHEMA,
         SWARM_ADMISSION_REPLAY_SCHEMA, SWARM_CAPACITY_PLAN_SCHEMA,
         SWARM_MEMORY_PRESSURE_REPLAY_SCHEMA, SWARM_OPERATOR_BUDGET_PROFILES_SCHEMA,
@@ -3402,7 +3402,12 @@ mod tests {
         SwarmActivityDigestConfig, SwarmActivityIds, SwarmActivityKind, SwarmActivityLedger,
         digest_from_jsonl,
     };
-    use serde_json::Value;
+    use std::io::Write as _;
+
+    use serde_json::{Value, json};
+
+    const RESOURCE_GOVERNOR_SURFACE_CONTRACT_SCHEMA: &str =
+        "pi.resource_governor.surface_contract.v1";
 
     fn budgets() -> HostResourceBudgets {
         HostResourceBudgets::fixed(10.0, 1_000, 100, 100, 1_000)
@@ -3448,6 +3453,114 @@ mod tests {
         ResourceRequest::new(ResourceOperationKind::Tool, "read")
             .with_estimated_tool_output_bytes(16 * 1024 * 1024)
             .with_queue_depth(128)
+    }
+
+    fn contract_budgets() -> HostResourceBudgets {
+        HostResourceBudgets::fixed_with_queue_depth(10.0, 1_000, 100, 100, 1_000, 8)
+    }
+
+    fn action_label(action: AdmissionAction) -> &'static str {
+        match action {
+            AdmissionAction::Admit => "admit",
+            AdmissionAction::Backpressure => "backpressure",
+            AdmissionAction::Deny => "deny",
+        }
+    }
+
+    fn dimension_label(dimension: ResourceDimension) -> &'static str {
+        match dimension {
+            ResourceDimension::CpuLoad => "cpu_load",
+            ResourceDimension::Rss => "rss",
+            ResourceDimension::Processes => "processes",
+            ResourceDimension::FileDescriptors => "file_descriptors",
+            ResourceDimension::ToolOutput => "tool_output",
+            ResourceDimension::QueueDepth => "queue_depth",
+            ResourceDimension::None => "none",
+        }
+    }
+
+    fn reason_code(decision: &AdmissionDecision) -> String {
+        if matches!(decision.action, AdmissionAction::Admit) {
+            return "admit_within_budget".to_string();
+        }
+        format!(
+            "{}_{}",
+            action_label(decision.action),
+            dimension_label(decision.dominant_dimension)
+        )
+    }
+
+    fn contract_budget(budgets: &HostResourceBudgets) -> Value {
+        json!({
+            "max_tool_output_bytes": budgets.max_tool_output_bytes,
+            "max_queue_depth": budgets.max_queue_depth,
+            "backpressure_ratio": budgets.backpressure_ratio,
+            "deny_ratio": budgets.deny_ratio,
+        })
+    }
+
+    fn contract_request(request: &ResourceRequest) -> Value {
+        json!({
+            "operation": dimensionless_operation_label(request.operation),
+            "capability": request.capability.as_str(),
+            "estimated_tool_output_bytes": request.estimated_tool_output_bytes,
+            "queue_depth": request.queue_depth,
+        })
+    }
+
+    fn contract_decision(decision: &AdmissionDecision) -> Value {
+        json!({
+            "action": action_label(decision.action),
+            "dominant_dimension": dimension_label(decision.dominant_dimension),
+            "dominant_ratio": decision.dominant_ratio,
+            "reason_code": reason_code(decision),
+            "reason": decision.reason.as_str(),
+            "retry_after_ms": decision.retry_after_ms,
+        })
+    }
+
+    fn dimensionless_operation_label(operation: ResourceOperationKind) -> &'static str {
+        match operation {
+            ResourceOperationKind::Tool => "tool",
+            ResourceOperationKind::Exec => "exec",
+            ResourceOperationKind::Http => "http",
+            ResourceOperationKind::Session => "session",
+            ResourceOperationKind::Ui => "ui",
+            ResourceOperationKind::Events => "events",
+            ResourceOperationKind::Log => "log",
+            ResourceOperationKind::Unknown => "unknown",
+        }
+    }
+
+    fn write_resource_contract_evidence(entry: &Value) {
+        let path = std::env::var_os("PI_RESOURCE_GOVERNOR_CONTRACT_EVIDENCE")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("PI_EVIDENCE_DIR").map(|base| {
+                    std::path::PathBuf::from(base)
+                        .join("perf")
+                        .join("resource_governor_surface_contract.jsonl")
+                })
+            });
+        let Some(path) = path else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("create resource governor contract evidence dir");
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("open resource governor contract evidence file");
+        writeln!(
+            file,
+            "{}",
+            serde_json::to_string(entry).expect("serialize resource governor contract evidence")
+        )
+        .expect("write resource governor contract evidence");
+        file.sync_all()
+            .expect("sync resource governor contract evidence");
     }
 
     fn replay_sample(
@@ -3645,6 +3758,176 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("admit")
         );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn surface_contract_enumerates_governed_pressure_outcomes() {
+        let budgets = contract_budgets();
+        let governor = ResourceGovernor::with_budgets(budgets.clone());
+        let tool_over_budget = ResourceRequest::new(ResourceOperationKind::Tool, "tool.read")
+            .with_estimated_tool_output_bytes(1_200);
+        let extension_queue_pressure =
+            ResourceRequest::new(ResourceOperationKind::Exec, "extension.exec").with_queue_depth(7);
+        let extension_semantic_event =
+            ResourceRequest::new(ResourceOperationKind::Events, "extension.events.emit")
+                .with_queue_depth(1);
+        let session_overload =
+            ResourceRequest::new(ResourceOperationKind::Session, "session.append_jsonl")
+                .with_queue_depth(9);
+
+        let tool_decision = governor.admit_sample(&tool_over_budget, sample());
+        let extension_queue_decision = governor.admit_sample(&extension_queue_pressure, sample());
+        let extension_event_decision = governor.admit_sample(&extension_semantic_event, sample());
+        let session_decision = governor.admit_sample(&session_overload, sample());
+
+        assert_eq!(tool_decision.action, AdmissionAction::Deny);
+        assert_eq!(
+            tool_decision.dominant_dimension,
+            ResourceDimension::ToolOutput
+        );
+        assert_eq!(
+            extension_queue_decision.action,
+            AdmissionAction::Backpressure
+        );
+        assert_eq!(
+            extension_queue_decision.dominant_dimension,
+            ResourceDimension::QueueDepth
+        );
+        assert_eq!(extension_event_decision.action, AdmissionAction::Admit);
+        assert_eq!(session_decision.action, AdmissionAction::Deny);
+        assert_eq!(
+            session_decision.dominant_dimension,
+            ResourceDimension::QueueDepth
+        );
+
+        let entries = vec![
+            json!({
+                "surface": "rpc_input_pressure",
+                "enforcement_path": "RpcSharedState::push_steering / push_follow_up",
+                "resource_governor_direct": false,
+                "budget": {
+                    "max_pending_messages": 128,
+                    "source": "MAX_RPC_PENDING_MESSAGES",
+                },
+                "decision": {
+                    "action": "deny",
+                    "reason_code": "rpc_input_queue_full",
+                    "user_visible_outcome": "reject enqueue with session error",
+                },
+                "evidence_pointer": "src/rpc.rs::shared_state_blocks_follow_up_when_steering_queue_reaches_total_cap",
+            }),
+            json!({
+                "surface": "rpc_output_pressure",
+                "enforcement_path": "RpcOutputPressureState::send_agent_event",
+                "resource_governor_direct": false,
+                "budget": {
+                    "output_channel_capacity": 1,
+                    "coalescible_classes": ["message_delta", "tool_update"],
+                },
+                "decision": {
+                    "action": "coalesce_and_flush_before_semantic",
+                    "reason_code": "rpc_output_semantic_preserved",
+                    "user_visible_outcome": "latest low-value update survives before final semantic event",
+                },
+                "semantic_preservation": {
+                    "preserved_event": "agent_end",
+                    "proof": "semantic event flushes pending message and tool updates before sending",
+                },
+                "evidence_pointer": "src/rpc.rs::rpc_output_pressure_conformance_matrix_flushes_each_coalesced_class_before_semantic",
+            }),
+            json!({
+                "surface": "tool_execution_hostcall",
+                "enforcement_path": "ExtensionHostcallDispatcher::apply_resource_governor",
+                "resource_governor_direct": true,
+                "budget": contract_budget(&budgets),
+                "request": contract_request(&tool_over_budget),
+                "decision": contract_decision(&tool_decision),
+                "semantic_preservation": null,
+            }),
+            json!({
+                "surface": "extension_hostcall_queue",
+                "enforcement_path": "ExtensionHostcallDispatcher::apply_resource_governor",
+                "resource_governor_direct": true,
+                "budget": contract_budget(&budgets),
+                "request": contract_request(&extension_queue_pressure),
+                "decision": contract_decision(&extension_queue_decision),
+                "semantic_preservation": null,
+            }),
+            json!({
+                "surface": "extension_event_semantic",
+                "enforcement_path": "ExtensionHostcallDispatcher::apply_resource_governor",
+                "resource_governor_direct": true,
+                "budget": contract_budget(&budgets),
+                "request": contract_request(&extension_semantic_event),
+                "decision": contract_decision(&extension_event_decision),
+                "semantic_preservation": {
+                    "preserved_event": "extension.events.emit",
+                    "proof": "healthy event hostcall admits immediately instead of coalescing or dropping semantic events",
+                },
+            }),
+            json!({
+                "surface": "session_persistence_under_load",
+                "enforcement_path": "ExtensionHostcallDispatcher::apply_resource_governor",
+                "resource_governor_direct": true,
+                "budget": contract_budget(&budgets),
+                "request": contract_request(&session_overload),
+                "decision": contract_decision(&session_decision),
+                "semantic_preservation": null,
+            }),
+        ];
+        let evidence = json!({
+            "schema": RESOURCE_GOVERNOR_SURFACE_CONTRACT_SCHEMA,
+            "budget_profile": "unit_contract_fixed_queue_depth",
+            "surface_count": entries.len(),
+            "contract": entries,
+            "required_surfaces": [
+                "rpc_input_pressure",
+                "rpc_output_pressure",
+                "tool_execution_hostcall",
+                "extension_hostcall_queue",
+                "extension_event_semantic",
+                "session_persistence_under_load",
+            ],
+            "verdict": "pass",
+        });
+
+        let contract = evidence
+            .get("contract")
+            .and_then(Value::as_array)
+            .expect("contract should contain entries");
+        assert_eq!(contract.len(), 6);
+        assert!(contract.iter().any(|entry| {
+            entry
+                .get("decision")
+                .and_then(|decision| decision.get("action"))
+                .and_then(Value::as_str)
+                == Some("deny")
+        }));
+        assert!(contract.iter().any(|entry| {
+            entry.get("semantic_preservation").is_some_and(|value| {
+                value
+                    .get("preserved_event")
+                    .and_then(Value::as_str)
+                    .is_some()
+            })
+        }));
+        for entry in contract {
+            assert!(
+                entry.get("budget").is_some_and(Value::is_object),
+                "contract entry must expose machine-readable budget: {entry:?}"
+            );
+            assert!(
+                entry
+                    .get("decision")
+                    .and_then(|decision| decision.get("reason_code"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|code| !code.is_empty()),
+                "contract entry must expose a machine-readable reason code: {entry:?}"
+            );
+        }
+
+        write_resource_contract_evidence(&evidence);
     }
 
     #[test]
