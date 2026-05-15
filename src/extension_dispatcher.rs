@@ -571,6 +571,9 @@ fn protocol_error_details(payload: &HostCallPayload, code: &str, message: &str) 
     })
 }
 
+// Kept as the no-trace parity oracle for tests; production dispatch records
+// trace details through `hostcall_outcome_to_protocol_result_with_trace`.
+#[allow(dead_code)]
 fn hostcall_outcome_to_protocol_result(
     call_id: &str,
     outcome: HostcallOutcome,
@@ -1006,6 +1009,9 @@ fn shadow_sampling_bucket(request: &HostcallRequest) -> u32 {
     low ^ high
 }
 
+// Shadow-mode normalization is exercised by parity/property tests even when
+// the live dispatcher takes the canonical-op path.
+#[allow(dead_code)]
 fn normalized_shadow_op(op: &str) -> String {
     let trimmed = op.trim();
     let mut normalized = String::with_capacity(trimmed.len());
@@ -1540,6 +1546,7 @@ impl RegimeSignal {
 
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::struct_excessive_bools)]
+#[allow(dead_code)]
 struct RegimeObservation {
     score: f64,
     mean: f64,
@@ -1945,6 +1952,9 @@ const fn hostcall_kind_label(kind: &HostcallKind) -> &'static str {
     }
 }
 
+// Entropy scoring is retained for rollout evidence/property checks while the
+// current dispatcher feature vector uses cheaper queue/service indicators.
+#[allow(dead_code)]
 fn shannon_entropy_bytes(bytes: &[u8]) -> f64 {
     if bytes.is_empty() {
         return 0.0;
@@ -2960,6 +2970,7 @@ impl<C: SchedulerClock + 'static> ExtensionDispatcher<C> {
     }
 
     #[allow(clippy::future_not_send)]
+    #[allow(dead_code)]
     async fn dispatch_exec(
         &self,
         call_id: &str,
@@ -3449,6 +3460,7 @@ impl<C: SchedulerClock + 'static> ExtensionDispatcher<C> {
     }
 
     #[allow(clippy::future_not_send)]
+    #[allow(dead_code)]
     async fn dispatch_session(&self, call_id: &str, op: &str, payload: Value) -> HostcallOutcome {
         self.dispatch_session_ref(call_id, op, &payload).await
     }
@@ -3683,6 +3695,7 @@ impl<C: SchedulerClock + 'static> ExtensionDispatcher<C> {
     }
 
     #[allow(clippy::future_not_send)]
+    #[allow(dead_code)]
     async fn dispatch_events(
         &self,
         call_id: &str,

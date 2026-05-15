@@ -191,6 +191,9 @@ pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
 /// Write JSON with sorted object keys directly into `out`, avoiding an
 /// intermediate `serde_json::Value` tree.  Produces output identical to
 /// `serde_json::to_string(&canonicalize_json(value))`.
+// Retained as the string-emitting oracle for canonical-hash test/debug paths;
+// the hot runtime path hashes directly through `hash_canonical_json_depth`.
+#[allow(dead_code)]
 fn write_canonical_json(value: &Value, out: &mut String) {
     use std::fmt::Write as _;
     match value {
@@ -236,6 +239,7 @@ fn write_canonical_json(value: &Value, out: &mut String) {
 /// Write a JSON-escaped string (with quotes) to `out`.  Uses a fast path for
 /// ASCII strings that need no escaping (common for object keys and method
 /// names), falling back to `serde_json::to_string` only when necessary.
+#[allow(dead_code)]
 fn write_json_escaped_str(s: &str, out: &mut String) {
     // Fast path: pure ASCII with no chars that require JSON escaping.
     if s.bytes().all(|b| b >= 0x20 && b != b'"' && b != b'\\') {
@@ -6141,7 +6145,11 @@ struct RuntimeRiskDecision {
     expected_loss: RuntimeRiskExpectedLoss,
     e_process: f64,
     e_threshold: f64,
+    // Decision-time conformal values are retained for replay diagnostics; the
+    // outcome ledger records the realized residual after dispatch.
+    #[allow(dead_code)]
     conformal_residual: f64,
+    #[allow(dead_code)]
     conformal_quantile: f64,
     drift_detected: bool,
     triggers: Vec<String>,
@@ -6151,6 +6159,9 @@ struct RuntimeRiskDecision {
     top_contributors: Vec<RuntimeRiskExplanationContributor>,
     budget_state: RuntimeRiskExplanationBudgetState,
     fallback_reason: Option<String>,
+    // Measures decision budget pressure; current telemetry persists the
+    // extraction and dispatch latencies separately.
+    #[allow(dead_code)]
     elapsed_ms: u64,
     state_label: RuntimeRiskStateLabel,
     sequence_context: RuntimeHostcallSequenceContext,
@@ -6422,6 +6433,7 @@ pub enum EnforcementState {
 
 impl EnforcementState {
     /// Convert from a [`RuntimeRiskAction`] (which lacks `Prompt`).
+    #[cfg(test)]
     const fn from_risk_action(action: RuntimeRiskAction) -> Self {
         match action {
             RuntimeRiskAction::Allow => Self::Allow,
@@ -6432,6 +6444,7 @@ impl EnforcementState {
     }
 
     /// Map back to the nearest [`RuntimeRiskAction`] (Prompt → Harden).
+    #[cfg(test)]
     const fn to_risk_action(self) -> RuntimeRiskAction {
         match self {
             Self::Allow => RuntimeRiskAction::Allow,
@@ -7506,6 +7519,9 @@ fn runtime_hostcall_extract_heredoc_blocks(command: &str) -> Vec<RuntimeExtracte
     payloads
 }
 
+// Test/debug helper for inspecting heredoc bodies; scoring uses the richer
+// block representation to retain invocation context.
+#[allow(dead_code)]
 fn runtime_hostcall_extract_heredoc_payloads(command: &str) -> Vec<String> {
     runtime_hostcall_extract_heredoc_blocks(command)
         .into_iter()
@@ -12849,6 +12865,9 @@ pub struct HostcallReactorRequest {
     /// Unique call identifier.
     pub call_id: String,
     /// Typed fast-lane opcode for this request.
+    // The dispatcher routes on this before enqueueing; drained requests keep it
+    // for tests and external reactor diagnostics.
+    #[allow(dead_code)]
     pub(crate) opcode: CommonHostcallOpcode,
     /// Params with the `"op"` key already stripped.
     pub params: Value,
@@ -17147,12 +17166,6 @@ mod native_runtime_experimental {
         clippy::option_if_let_else,
         clippy::significant_drop_tightening
     )]
-    #[allow(
-        clippy::manual_let_else,
-        clippy::needless_pass_by_value,
-        clippy::option_if_let_else,
-        clippy::significant_drop_tightening
-    )]
     impl NativeRustExtensionRuntimeHandle {
         pub async fn start() -> Result<Self> {
             Ok(Self {
@@ -19614,6 +19627,10 @@ mod native_runtime_duplicate_scaffold {
         state: Arc<RwLock<NativeRustRuntimeState>>,
     }
 
+    // The native runtime handle mirrors the async JS runtime handle so
+    // `ExtensionRuntimeHandle` can switch implementations without wrapper
+    // shims. Several methods complete synchronously in this in-process lane.
+    #[allow(clippy::unused_async)]
     impl NativeRustExtensionRuntimeHandle {
         pub async fn start() -> Result<Self> {
             tracing::info!(
@@ -23770,6 +23787,7 @@ async fn dispatch_shared_allowed_legacy(
 }
 
 #[allow(clippy::future_not_send)]
+#[allow(clippy::unused_async)]
 async fn dispatch_hostcall_env(ctx: &HostCallContext<'_>, params: Value) -> HostcallOutcome {
     let mut names = Vec::new();
 
@@ -23835,6 +23853,7 @@ async fn dispatch_hostcall_env(ctx: &HostCallContext<'_>, params: Value) -> Host
 }
 
 #[allow(clippy::future_not_send)]
+#[allow(dead_code)]
 async fn dispatch_hostcall(host: &JsRuntimeHost, request: HostcallRequest) -> HostcallOutcome {
     dispatch_hostcall_with_runtime(None, host, request).await
 }
@@ -23910,6 +23929,7 @@ async fn dispatch_hostcall_tool(
 }
 
 #[allow(clippy::future_not_send, clippy::too_many_lines)]
+#[allow(dead_code)]
 async fn dispatch_hostcall_exec(
     runtime: Option<&PiJsRuntime>,
     call_id: &str,
@@ -24568,6 +24588,7 @@ fn parse_session_hostcall_op(op: &str) -> Option<SessionHostcallOp> {
 
 #[allow(clippy::future_not_send)]
 #[allow(clippy::too_many_lines)]
+#[allow(dead_code)]
 async fn dispatch_hostcall_session(
     call_id: &str,
     manager: &ExtensionManager,
@@ -24775,6 +24796,7 @@ async fn dispatch_hostcall_session_ref(
 }
 
 #[allow(clippy::future_not_send)]
+#[allow(dead_code)]
 async fn dispatch_hostcall_ui(
     call_id: &str,
     manager: &ExtensionManager,
@@ -24848,6 +24870,7 @@ pub(crate) fn classify_ui_hostcall_error(err: &Error) -> &'static str {
 }
 
 #[allow(clippy::future_not_send, clippy::too_many_lines)]
+#[allow(clippy::unused_async)]
 async fn dispatch_hostcall_log(
     call_id: &str,
     extension_id: Option<&str>,
@@ -25004,6 +25027,7 @@ fn parse_events_hostcall_op(op: &str) -> Option<EventsHostcallOp> {
 }
 
 #[allow(clippy::future_not_send, clippy::too_many_lines)]
+#[allow(dead_code)]
 async fn dispatch_hostcall_events(
     call_id: &str,
     manager: &ExtensionManager,
@@ -25629,6 +25653,9 @@ pub(crate) struct RegistrySnapshot {
     /// Registered MCP server specs.
     pub mcp_servers: Vec<Value>,
     /// Registered flags.
+    // Snapshot keeps the raw registry view for diagnostics while hot readers
+    // use `all_flags`, which is already merged and deduplicated.
+    #[allow(dead_code)]
     pub flags: Vec<Value>,
     /// Current working directory.
     pub cwd: Option<String>,
@@ -25641,8 +25668,12 @@ pub(crate) struct RegistrySnapshot {
     /// Current thinking level.
     pub current_thinking_level: Option<String>,
     /// Global kill-switch for hostcall compatibility lane.
+    // The live path reads kill switches from the guarded manager state; the
+    // snapshot copies them for read-only diagnostics and future RCU consumers.
+    #[allow(dead_code)]
     pub hostcall_compat_kill_switch_global: bool,
     /// Per-extension kill-switch set.
+    #[allow(dead_code)]
     pub hostcall_compat_kill_switch_extensions: HashSet<String>,
     /// Monotonic version counter (seqlock-style) for cache invalidation.
     pub version: u64,
@@ -26322,6 +26353,7 @@ impl ExtensionManager {
     ///
     /// Call this after any mutation to fields captured in `RegistrySnapshot`.
     /// Caller must already hold the mutex.
+    #[allow(dead_code)]
     fn refresh_snapshot_locked(&self, inner: &ExtensionManagerInner) {
         let snap = Self::build_snapshot_from_inner(inner);
         self.publish_snapshot(snap);
@@ -30703,14 +30735,12 @@ pub const fn is_lifecycle_event(event: &ExtensionEventName) -> bool {
 /// Payload wrapper that supports lazy serialization to avoid O(N^2) copying
 /// of large message buffers during high-frequency streaming events.
 enum CoalescedPayload {
-    Value(Option<Value>),
     Lazy(Box<dyn FnOnce() -> Option<Value> + Send>),
 }
 
 impl CoalescedPayload {
     fn resolve(self) -> Option<Value> {
         match self {
-            Self::Value(v) => v,
             Self::Lazy(f) => f(),
         }
     }

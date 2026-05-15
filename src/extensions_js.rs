@@ -4628,15 +4628,6 @@ struct HostcallCancellation {
 }
 
 impl HostcallTracker {
-    fn clear(&mut self) {
-        self.pending.clear();
-        self.cancelled.clear();
-        self.call_to_timer.clear();
-        self.timer_to_call.clear();
-        self.enqueued_at_ms.clear();
-        self.stream_last_seq.clear();
-    }
-
     fn register(&mut self, call_id: String, timer_id: Option<u64>, enqueued_at_ms: u64) {
         self.pending.insert(call_id.clone());
         self.cancelled.remove(&call_id);
@@ -5019,6 +5010,9 @@ fn path_is_in_allowed_extension_root(
         .any(|root| path.starts_with(root))
 }
 
+// Retained for policy diagnostics that distinguish registered roots from the
+// broader fallback root set used by filesystem hostcalls.
+#[allow(dead_code)]
 fn path_is_in_registered_extension_root(
     path: &Path,
     module_state: &Rc<RefCell<PiJsModuleState>>,
@@ -5259,6 +5253,9 @@ fn is_proxy_allowlisted_package(spec: &str) -> bool {
     false
 }
 
+// Process-capture helper kept for bounded-output experiments; the current JS
+// bridge routes command execution through the shared tool path.
+#[allow(dead_code)]
 fn capture_with_max_buffer(
     mut reader: impl std::io::Read,
     limit_bytes: usize,
@@ -16129,6 +16126,7 @@ impl<C: SchedulerClock + 'static> PiJsRuntime<C> {
     }
 
     /// Generate a unique trace ID.
+    #[allow(dead_code)]
     fn next_trace_id(&self) -> u64 {
         self.trace_seq.fetch_add(1, AtomicOrdering::SeqCst)
     }
@@ -17640,6 +17638,9 @@ fn generate_call_id() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+// Hex helper retained for crypto parity tests while current bridge hashing uses
+// formatted SHA output directly.
+#[allow(dead_code)]
 fn hex_lower(bytes: &[u8]) -> String {
     const HEX: [char; 16] = [
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
