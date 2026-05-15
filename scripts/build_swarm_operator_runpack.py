@@ -208,6 +208,9 @@ AUTOPILOT_E2E_REQUIRED_SCENARIOS = (
     "empty_ready_queue",
     "degraded_agent_mail_soft_lock",
     "saturated_rch_queue",
+    "capacity_cpu16_mem64_healthy_admit",
+    "capacity_cpu32_mem128_degraded_mail",
+    "capacity_cpu64_mem256_rch_backoff",
     "stale_in_progress_bead",
     "unrelated_dirty_worktree",
     "malformed_source_fail_closed",
@@ -6440,21 +6443,37 @@ def autopilot_e2e_event(
     }
 
 
-def autopilot_e2e_preflight(generated_at: str) -> dict[str, Any]:
+def gibibytes(gib: int) -> int:
+    return gib * 1024 * 1024 * 1024
+
+
+def autopilot_e2e_capacity_preflight(
+    generated_at: str,
+    *,
+    logical_cores: int,
+    effective_cores: int,
+    memory_gib: int,
+    agent_concurrency: int,
+    rch_verification_fanout: int,
+    max_queue_depth: int,
+    tool_concurrency: int | None = None,
+    extension_hostcall_lanes: int | None = None,
+) -> dict[str, Any]:
+    effective_memory_bytes = gibibytes(memory_gib)
     return {
         "schema": HOST_PREFLIGHT_SCHEMA,
         "generated_at": generated_at,
         "status": "pass",
         "cpu": {
-            "logical_cores": 16,
-            "effective_cores": 8,
-            "cgroup_quota": {"quota_cores": 8.0, "unlimited": False},
-            "cpuset": {"cpu_count": 8},
+            "logical_cores": logical_cores,
+            "effective_cores": effective_cores,
+            "cgroup_quota": {"quota_cores": float(effective_cores), "unlimited": False},
+            "cpuset": {"cpu_count": effective_cores},
         },
         "numa": {"node_count": 2, "nodes": [0, 1]},
         "memory": {
-            "cgroup_limit_bytes": 34359738368,
-            "effective_limit_bytes": 34359738368,
+            "cgroup_limit_bytes": effective_memory_bytes,
+            "effective_limit_bytes": effective_memory_bytes,
             "unlimited": False,
         },
         "tmpfs_headroom": {
@@ -6464,28 +6483,43 @@ def autopilot_e2e_preflight(generated_at: str) -> dict[str, Any]:
                     "env_name": "CARGO_TARGET_DIR",
                     "path": "/data/tmp/pi_agent_rust_cargo/e2e/target",
                     "ready": True,
-                    "available_kb": 52428800,
+                    "available_kb": max(1, memory_gib * 1024 * 1024 // 2),
                 },
                 {
                     "env_name": "TMPDIR",
                     "path": "/data/tmp/pi_agent_rust_cargo/e2e/tmp",
                     "ready": True,
-                    "available_kb": 52428800,
+                    "available_kb": max(1, memory_gib * 1024 * 1024 // 2),
                 },
             ],
         },
         "recommended_budgets": {
-            "agent_concurrency": 4,
-            "tool_concurrency": 8,
-            "extension_hostcall_lanes": 16,
-            "rch_verification_fanout": 2,
-            "max_queue_depth": 2,
-            "max_rss_bytes": 17179869184,
+            "agent_concurrency": agent_concurrency,
+            "tool_concurrency": tool_concurrency or agent_concurrency * 2,
+            "extension_hostcall_lanes": extension_hostcall_lanes
+            or min(16, max(1, effective_cores // 2)),
+            "rch_verification_fanout": rch_verification_fanout,
+            "max_queue_depth": max_queue_depth,
+            "max_rss_bytes": effective_memory_bytes // 2,
             "plan_confidence": "high",
         },
         "critical_failures": [],
         "source_errors": [],
     }
+
+
+def autopilot_e2e_preflight(generated_at: str) -> dict[str, Any]:
+    return autopilot_e2e_capacity_preflight(
+        generated_at,
+        logical_cores=16,
+        effective_cores=8,
+        memory_gib=32,
+        agent_concurrency=4,
+        tool_concurrency=8,
+        extension_hostcall_lanes=16,
+        rch_verification_fanout=2,
+        max_queue_depth=2,
+    )
 
 
 def autopilot_e2e_doctor_payload(
@@ -6524,11 +6558,16 @@ def autopilot_e2e_cargo_payload(
     queue_action: str = "proceed",
     slot_pressure: str = "available",
     queue_depth: int = 0,
+    slots_total: int = 8,
+    slots_available: int | None = None,
+    active_builds: int | None = None,
+    queued_builds: int | None = None,
+    reason: str = "autopilot_e2e_fixture",
 ) -> dict[str, Any]:
     return {
         "schema": "pi.cargo_headroom.admission.v1",
         "decision": decision,
-        "reason": "autopilot_e2e_fixture",
+        "reason": reason,
         "requested_runner": "rch",
         "resolved_runner": "rch" if decision == "admit" else "none",
         "command_class": "heavy",
@@ -6542,12 +6581,18 @@ def autopilot_e2e_cargo_payload(
             "reason": f"e2e_{queue_action}",
             "slot_pressure": slot_pressure,
             "queue_depth": queue_depth,
-            "active_builds": queue_depth,
-            "queued_builds": max(0, queue_depth - 2),
-            "slots_available": 0 if slot_pressure == "saturated" else 8,
-            "slots_total": 8,
-            "workers_healthy": 8,
-            "workers_total": 8,
+            "active_builds": queue_depth if active_builds is None else active_builds,
+            "queued_builds": max(0, queue_depth - 2)
+            if queued_builds is None
+            else queued_builds,
+            "slots_available": (
+                0 if slot_pressure == "saturated" else slots_total
+            )
+            if slots_available is None
+            else slots_available,
+            "slots_total": slots_total,
+            "workers_healthy": slots_total,
+            "workers_total": slots_total,
             "estimated_wait_seconds": 240 if queue_action == "backoff" else 0,
         },
     }
@@ -6590,6 +6635,27 @@ def autopilot_e2e_agent_mail_reservations(generated_at: str) -> dict[str, Any]:
         "generated_at": generated_at,
         "status": "ok",
         "reservations": [],
+    }
+
+
+def autopilot_e2e_active_beads_payload(
+    generated_at: str,
+    *,
+    active_count: int,
+    prefix: str,
+) -> dict[str, Any]:
+    return {
+        "issues": [
+            {
+                "id": f"bd-{prefix}-{index + 1}",
+                "title": f"{prefix} active fixture {index + 1}",
+                "status": "in_progress",
+                "assignee": f"{prefix}-agent-{index + 1}",
+                "priority": 2,
+                "updated_at": generated_at,
+            }
+            for index in range(active_count)
+        ]
     }
 
 
@@ -7004,18 +7070,18 @@ def build_autopilot_e2e_summary(
         )
         input_pack = build_autopilot_input_pack(args)
         plan = build_autopilot_plan(input_pack, max_items=max_items)
-        results.append(
-            autopilot_e2e_result_from_plan(
-                scenario_id=scenario_id,
-                scenario_dir=scenario_dir,
-                generated_at=generated_at,
-                correlation_id=correlation_id,
-                input_pack=input_pack,
-                plan=plan,
-                expected_actions=expected_actions,
-                events_path=events_path,
-            )
+        result = autopilot_e2e_result_from_plan(
+            scenario_id=scenario_id,
+            scenario_dir=scenario_dir,
+            generated_at=generated_at,
+            correlation_id=correlation_id,
+            input_pack=input_pack,
+            plan=plan,
+            expected_actions=expected_actions,
+            events_path=events_path,
         )
+        results.append(result)
+        return input_pack, plan, result
 
     ready_beads, ready_queue, ready_commands = build_real_beads_sources(
         workspace / "healthy_ready_claim",
@@ -7107,6 +7173,183 @@ def build_autopilot_e2e_summary(
             queue_depth=6,
         ),
     )
+
+    capacity_ready_queue = [
+        {
+            "id": "bd-capacity-ready",
+            "title": "Capacity fixture ready work",
+            "status": "open",
+            "priority": 2,
+            "updated_at": generated_at,
+            "labels": ["capacity", "resource-governor"],
+        }
+    ]
+    capacity_cases = [
+        {
+            "scenario_id": "capacity_cpu16_mem64_healthy_admit",
+            "preflight": autopilot_e2e_capacity_preflight(
+                generated_at,
+                logical_cores=16,
+                effective_cores=16,
+                memory_gib=64,
+                agent_concurrency=8,
+                rch_verification_fanout=2,
+                max_queue_depth=4,
+            ),
+            "cargo": autopilot_e2e_cargo_payload(
+                queue_depth=1,
+                slots_total=2,
+                active_builds=1,
+                queued_builds=0,
+            ),
+            "beads": autopilot_e2e_active_beads_payload(
+                generated_at,
+                active_count=2,
+                prefix="cap16",
+            ),
+            "agent_mail": agent_mail_ok,
+            "expected_actions": ["claim_ready_bead"],
+            "expected_status": "stable",
+            "expected_selected_action": "claim_ready_bead",
+            "expected_mail_status": "ok",
+            "expected_active_agents": 2,
+            "expected_active_builds": 1,
+            "expected_signal_ids": set(),
+        },
+        {
+            "scenario_id": "capacity_cpu32_mem128_degraded_mail",
+            "preflight": autopilot_e2e_capacity_preflight(
+                generated_at,
+                logical_cores=32,
+                effective_cores=32,
+                memory_gib=128,
+                agent_concurrency=16,
+                rch_verification_fanout=4,
+                max_queue_depth=8,
+            ),
+            "cargo": autopilot_e2e_cargo_payload(
+                queue_depth=2,
+                slots_total=4,
+                active_builds=2,
+                queued_builds=0,
+            ),
+            "beads": autopilot_e2e_active_beads_payload(
+                generated_at,
+                active_count=6,
+                prefix="cap32",
+            ),
+            "agent_mail": autopilot_e2e_agent_mail_status(
+                generated_at,
+                status="error",
+                health_level="red",
+                issue=(
+                    "sqlite schema missing required health_check tables: "
+                    "projects, agents, messages, message_recipients"
+                ),
+                semantic_readiness_detail=(
+                    "sqlite schema missing required health_check tables: "
+                    "projects, agents, messages, message_recipients"
+                ),
+                recovery_mode="corrupt",
+            ),
+            "expected_actions": ["use_beads_soft_lock"],
+            "expected_status": "stable",
+            "expected_selected_action": "use_beads_soft_lock",
+            "expected_mail_status": "degraded",
+            "expected_active_agents": 6,
+            "expected_active_builds": 2,
+            "expected_signal_ids": set(),
+        },
+        {
+            "scenario_id": "capacity_cpu64_mem256_rch_backoff",
+            "preflight": autopilot_e2e_capacity_preflight(
+                generated_at,
+                logical_cores=64,
+                effective_cores=64,
+                memory_gib=256,
+                agent_concurrency=32,
+                rch_verification_fanout=8,
+                max_queue_depth=16,
+            ),
+            "cargo": autopilot_e2e_cargo_payload(
+                decision="backoff",
+                queue_action="backoff",
+                slot_pressure="saturated",
+                queue_depth=18,
+                slots_total=8,
+                slots_available=0,
+                active_builds=8,
+                queued_builds=10,
+                reason="local cargo fallback refused; wait for RCH slots",
+            ),
+            "beads": autopilot_e2e_active_beads_payload(
+                generated_at,
+                active_count=12,
+                prefix="cap64",
+            ),
+            "agent_mail": agent_mail_ok,
+            "expected_actions": ["adjust_swarm_budget", "wait_for_rch"],
+            "expected_status": "deny_new_work",
+            "expected_selected_action": "adjust_swarm_budget",
+            "expected_mail_status": "ok",
+            "expected_active_agents": 12,
+            "expected_active_builds": 8,
+            "expected_signal_ids": {
+                "rch_queue_depth_over_budget",
+                "rch_queue_saturated",
+            },
+        },
+    ]
+    for case in capacity_cases:
+        input_pack, plan, result = run_plan_scenario(
+            str(case["scenario_id"]),
+            beads_payload=case["beads"],
+            beads_ready_payload=capacity_ready_queue,
+            commands=list(ready_commands),
+            expected_actions=list(case["expected_actions"]),
+            cargo_payload=case["cargo"],
+            agent_mail_payload=case["agent_mail"],
+            current_preflight=case["preflight"],
+        )
+        budget_drift = input_pack["normalized_inputs"]["budget_drift"]
+        current = budget_drift["current_observation"]
+        accepted = budget_drift["accepted_profile"]
+        recommended = accepted["recommended_budgets"]
+        queue_forecast = input_pack["normalized_inputs"]["cargo_admission"][
+            "queue_forecast"
+        ]
+        signals = {
+            signal["id"] for signal in budget_drift["signals"] if isinstance(signal, dict)
+        }
+
+        assert budget_drift["status"] == case["expected_status"]
+        assert result["selected_action"] == case["expected_selected_action"]
+        assert input_pack["normalized_inputs"]["agent_mail"]["status"] == case[
+            "expected_mail_status"
+        ]
+        assert current["active_agents"] == case["expected_active_agents"]
+        assert current["active_builds"] == case["expected_active_builds"]
+        assert recommended["rch_verification_fanout"] == case["preflight"][
+            "recommended_budgets"
+        ]["rch_verification_fanout"]
+        assert queue_forecast["slots_total"] == case["cargo"]["rch_queue_forecast"][
+            "slots_total"
+        ]
+        assert set(case["expected_signal_ids"]).issubset(signals)
+        if case["expected_status"] == "deny_new_work":
+            assert current["slot_pressure"] == "saturated"
+            assert any(
+                signal["evidence_path"]
+                == "normalized_inputs.cargo_admission.queue_forecast.queue_depth"
+                for signal in budget_drift["signals"]
+            )
+            assert any(
+                signal["evidence_path"]
+                == "normalized_inputs.cargo_admission.queue_forecast"
+                for signal in budget_drift["signals"]
+            )
+        assert_autopilot_input_pack_contract(input_pack)
+        assert_autopilot_plan_contract(plan)
 
     stale_beads_payload = {
         "issues": [
