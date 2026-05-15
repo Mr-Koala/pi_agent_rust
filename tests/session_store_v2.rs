@@ -12,6 +12,7 @@ use std::fs;
 use std::future::Future;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
@@ -1491,6 +1492,16 @@ fn make_message_entry(id: &str, parent_id: Option<&str>, text: &str) -> pi::sess
     })
 }
 
+fn make_user_session_message(
+    text: impl Into<String>,
+    timestamp: i64,
+) -> pi::session::SessionMessage {
+    pi::session::SessionMessage::User {
+        content: pi::model::UserContent::Text(text.into()),
+        timestamp: Some(timestamp),
+    }
+}
+
 fn run_async<T, Fut>(future: Fut) -> T
 where
     Fut: Future<Output = T>,
@@ -1527,6 +1538,14 @@ fn build_large_history_entries(count: usize, payload_bytes: usize) -> Vec<Sessio
         parent_id = Some(id);
     }
     entries
+}
+
+fn session_entry_ids(session: &Session) -> Vec<String> {
+    session
+        .entries
+        .iter()
+        .filter_map(|entry| entry.base_id().cloned())
+        .collect()
 }
 
 fn append_jsonl_entry(path: &Path, entry: &SessionEntry) -> PiResult<()> {
@@ -1621,16 +1640,89 @@ fn index_concurrent_session_snapshots(root: &Path) -> PiResult<usize> {
     Ok(listed.len())
 }
 
+fn concurrent_save_resume_index_chaos(root: &Path) -> PiResult<usize> {
+    const WORKERS: usize = 4;
+    const MESSAGES_PER_SESSION: usize = 6;
+
+    fs::create_dir_all(root)?;
+    let index = pi::session_index::SessionIndex::for_sessions_root(root);
+    let start = Arc::new(Barrier::new(WORKERS));
+    let mut handles = Vec::with_capacity(WORKERS);
+
+    for worker in 0..WORKERS {
+        let index = index.clone();
+        let root = root.to_path_buf();
+        let start = Arc::clone(&start);
+        handles.push(std::thread::spawn(move || -> PiResult<()> {
+            start.wait();
+            let mut session = Session::create_with_dir(Some(root.clone()));
+            for item in 0..MESSAGES_PER_SESSION {
+                session.append_message(make_user_session_message(
+                    format!("chaos-worker-{worker:02}-message-{item:02}"),
+                    i64::try_from(item).unwrap_or(i64::MAX),
+                ));
+            }
+
+            run_async(async { session.save().await })?;
+            let path = session
+                .path
+                .clone()
+                .ok_or_else(|| pi::Error::session("chaos worker saved session without path"))?;
+            let path_string = path.display().to_string();
+
+            pi::session::create_v2_sidecar_from_jsonl(&path)?;
+            let resumed = run_async(async { Session::open(&path_string).await })?;
+            assert_eq!(
+                resumed.entries.len(),
+                MESSAGES_PER_SESSION,
+                "resumed chaos worker session lost entries; worker={worker}; path={}",
+                path.display()
+            );
+            assert_eq!(
+                resumed.leaf_id(),
+                session.leaf_id(),
+                "resumed chaos worker session changed leaf; worker={worker}; path={}",
+                path.display()
+            );
+
+            index.index_session(&resumed)?;
+            let listed = index.list_sessions(None)?;
+            assert!(
+                listed
+                    .iter()
+                    .any(|meta| meta.path.as_str().eq(path_string.as_str())),
+                "concurrent SessionIndex reader missed worker={worker} path={path_string}"
+            );
+            Ok(())
+        }));
+    }
+
+    for handle in handles {
+        handle
+            .join()
+            .map_err(|_| pi::Error::session("concurrent save/resume worker panicked"))??;
+    }
+
+    let refresh = index.refresh_incremental()?;
+    let listed = index.list_sessions(None)?;
+    assert!(
+        listed.len() >= WORKERS,
+        "stale SessionIndex refresh lost worker rows; listed={} expected_at_least={WORKERS} refreshed={} reused={} root={}",
+        listed.len(),
+        refresh.refreshed_files,
+        refresh.reused_files,
+        root.display()
+    );
+    Ok(listed.len())
+}
+
 fn assert_crash_resilient_session_save(root: &Path) -> PiResult<std::path::PathBuf> {
     let mut session = Session::create_with_dir(Some(root.to_path_buf()));
     for idx in 0..32 {
-        session.append_message(pi::session::SessionMessage::User {
-            content: pi::model::UserContent::Text(format!(
-                "crash-resilient-save-{idx:02}: {}",
-                "s".repeat(128)
-            )),
-            timestamp: Some(i64::from(idx)),
-        });
+        session.append_message(make_user_session_message(
+            format!("crash-resilient-save-{idx:02}: {}", "s".repeat(128)),
+            i64::from(idx),
+        ));
     }
 
     run_async(async { session.save().await })?;
@@ -1693,6 +1785,25 @@ struct StaleFallbackOutcome {
     sidecar_stale: bool,
     total_entries: usize,
     elapsed_us: u64,
+}
+
+struct JsonlResumeBaseline {
+    jsonl: PathBuf,
+    jsonl_path: String,
+    ids: Vec<String>,
+    leaf_id: Option<String>,
+    opened_backend: String,
+}
+
+struct V2ResumeParity {
+    v2_root: PathBuf,
+    store: SessionStoreV2,
+    opened_backend: String,
+}
+
+struct CorruptSidecarFallback {
+    opened_backend: String,
+    selected_backend: String,
 }
 
 fn migrate_large_history_and_rebuild_checkpoint(
@@ -1843,6 +1954,182 @@ fn assert_stale_sidecar_fallback(
         sidecar_stale: stale_trace.storage.v2_sidecar_stale,
         total_entries: stale_trace.input.total_entries,
         elapsed_us: elapsed_test_us(stale_start),
+    })
+}
+
+fn assert_jsonl_v2_resume_parity_and_corrupt_sidecar_fallback(
+    jsonl_root: &Path,
+) -> PiResult<Value> {
+    let baseline = build_jsonl_resume_baseline(jsonl_root)?;
+    let sidecar = assert_v2_resume_parity(jsonl_root, &baseline)?;
+    let (index_path, segment_path) =
+        assert_recoverable_v2_index_rebuild(&sidecar.store, &sidecar.v2_root, &baseline.ids)?;
+    corrupt_sidecar_segment(&segment_path)?;
+    let fallback = assert_corrupt_sidecar_jsonl_fallback(jsonl_root, &baseline, &segment_path)?;
+
+    Ok(json!({
+        "jsonl_path": baseline.jsonl.display().to_string(),
+        "v2_root": sidecar.v2_root.display().to_string(),
+        "rebuilt_index": index_path.display().to_string(),
+        "corrupt_segment": segment_path.display().to_string(),
+        "entry_count": baseline.ids.len(),
+        "baseline_backend": baseline.opened_backend,
+        "sidecar_backend": sidecar.opened_backend,
+        "fallback_backend": fallback.opened_backend,
+        "sidecar_selected_before_fallback": fallback.selected_backend,
+    }))
+}
+
+fn build_jsonl_resume_baseline(jsonl_root: &Path) -> PiResult<JsonlResumeBaseline> {
+    const ENTRIES: usize = 32;
+    const PAYLOAD_BYTES: usize = 96;
+
+    fs::create_dir_all(jsonl_root)?;
+    let entries = build_large_history_entries(ENTRIES, PAYLOAD_BYTES);
+    let jsonl = build_test_jsonl(jsonl_root, &entries);
+    let jsonl_path = jsonl.display().to_string();
+    let jsonl_trace =
+        run_async(async { Session::cold_start_trace_bundle(&jsonl, jsonl_root).await })?;
+    assert_eq!(
+        jsonl_trace.storage.opened_backend,
+        "jsonl",
+        "baseline JSONL open used unexpected backend; jsonl={}",
+        jsonl.display()
+    );
+
+    let (jsonl_session, jsonl_diag) =
+        run_async(async { Session::open_with_diagnostics(&jsonl_path).await })?;
+    assert!(
+        jsonl_diag.skipped_entries.is_empty(),
+        "baseline JSONL open skipped entries: {:?}",
+        jsonl_diag.skipped_entries
+    );
+
+    Ok(JsonlResumeBaseline {
+        jsonl,
+        jsonl_path,
+        ids: session_entry_ids(&jsonl_session),
+        leaf_id: jsonl_session.leaf_id().map(str::to_string),
+        opened_backend: jsonl_trace.storage.opened_backend,
+    })
+}
+
+fn assert_v2_resume_parity(
+    jsonl_root: &Path,
+    baseline: &JsonlResumeBaseline,
+) -> PiResult<V2ResumeParity> {
+    let store = pi::session::create_v2_sidecar_from_jsonl(&baseline.jsonl)?;
+    store.validate_integrity()?;
+    let v2_root = pi::session_store_v2::v2_sidecar_path(&baseline.jsonl);
+    let v2_trace =
+        run_async(async { Session::cold_start_trace_bundle(&baseline.jsonl, jsonl_root).await })?;
+    assert_eq!(
+        v2_trace.storage.selected_backend,
+        "v2_sidecar",
+        "V2 sidecar was not selected after migration; jsonl={}",
+        baseline.jsonl.display()
+    );
+    assert_eq!(
+        v2_trace.storage.opened_backend,
+        "v2_sidecar",
+        "V2 sidecar did not open cleanly before corruption; jsonl={}",
+        baseline.jsonl.display()
+    );
+
+    let (v2_session, v2_diag) =
+        run_async(async { Session::open_with_diagnostics(&baseline.jsonl_path).await })?;
+    assert!(
+        v2_diag.skipped_entries.is_empty(),
+        "V2 sidecar open skipped entries: {:?}",
+        v2_diag.skipped_entries
+    );
+    assert_eq!(
+        session_entry_ids(&v2_session),
+        baseline.ids,
+        "V2 resume entry IDs diverged from JSONL baseline; jsonl={}",
+        baseline.jsonl.display()
+    );
+    assert_eq!(
+        v2_session.leaf_id(),
+        baseline.leaf_id.as_deref(),
+        "V2 resume leaf diverged from JSONL baseline; jsonl={}",
+        baseline.jsonl.display()
+    );
+
+    Ok(V2ResumeParity {
+        v2_root,
+        store,
+        opened_backend: v2_trace.storage.opened_backend,
+    })
+}
+
+fn assert_recoverable_v2_index_rebuild(
+    store: &SessionStoreV2,
+    v2_root: &Path,
+    jsonl_ids: &[String],
+) -> PiResult<(PathBuf, PathBuf)> {
+    const MAX_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
+
+    let index_path = store.index_file_path();
+    fs::write(&index_path, "{not-valid-offset-index-json}\n")?;
+    let rebuilt = SessionStoreV2::create(v2_root, MAX_SEGMENT_BYTES)?;
+    rebuilt.validate_integrity()?;
+    assert_eq!(
+        frame_ids(&rebuilt.read_all_entries()?),
+        jsonl_ids,
+        "recoverable V2 index rebuild changed entry IDs; index={}",
+        index_path.display()
+    );
+
+    Ok((index_path, rebuilt.segment_file_path(1)))
+}
+
+fn corrupt_sidecar_segment(segment_path: &Path) -> PiResult<()> {
+    let segment_text = fs::read_to_string(segment_path)?;
+    let mut lines: Vec<String> = segment_text.lines().map(ToString::to_string).collect();
+    assert!(
+        lines.len() >= 2,
+        "sidecar segment needs multiple frames for corrupt fallback test; segment={}",
+        segment_path.display()
+    );
+    let frame = lines.get_mut(1).ok_or_else(|| {
+        pi::Error::session("sidecar segment frame disappeared after length check")
+    })?;
+    *frame = "{malformed-sidecar-frame".to_string();
+    fs::write(segment_path, format!("{}\n", lines.join("\n")))?;
+    Ok(())
+}
+
+fn assert_corrupt_sidecar_jsonl_fallback(
+    jsonl_root: &Path,
+    baseline: &JsonlResumeBaseline,
+    segment_path: &Path,
+) -> PiResult<CorruptSidecarFallback> {
+    let fallback_trace =
+        run_async(async { Session::cold_start_trace_bundle(&baseline.jsonl, jsonl_root).await })?;
+    assert_eq!(
+        fallback_trace.storage.selected_backend,
+        "v2_sidecar",
+        "corrupt sidecar fixture should first select V2; jsonl={}",
+        baseline.jsonl.display()
+    );
+    assert_eq!(
+        fallback_trace.storage.opened_backend,
+        "jsonl",
+        "corrupt V2 sidecar did not fall back to JSONL; segment={}",
+        segment_path.display()
+    );
+    let fallback_session = run_async(async { Session::open(&baseline.jsonl_path).await })?;
+    assert_eq!(
+        session_entry_ids(&fallback_session),
+        baseline.ids,
+        "JSONL fallback after corrupt sidecar changed entry IDs; segment={}",
+        segment_path.display()
+    );
+
+    Ok(CorruptSidecarFallback {
+        opened_backend: fallback_trace.storage.opened_backend,
+        selected_backend: fallback_trace.storage.selected_backend,
     })
 }
 
@@ -2980,6 +3267,59 @@ fn large_session_store_v2_recovery_swarm_profile_emits_evidence() -> PiResult<()
     );
     println!(
         "session store v2 recovery swarm evidence: {}",
+        evidence_path.display()
+    );
+
+    Ok(())
+}
+
+/// Deterministic chaos lane for concurrent save/resume, session-index refresh,
+/// recoverable V2 index rebuild, corrupt-sidecar fallback, and JSONL/V2 parity.
+#[test]
+fn session_index_store_v2_resume_chaos_lane_emits_evidence() -> PiResult<()> {
+    let total_start = test_timing_start();
+    let dir = tempdir()?;
+    let jsonl_root = dir.path().join("jsonl-parity");
+    let index_root = dir.path().join("index-concurrency");
+
+    let parity_start = test_timing_start();
+    let parity = assert_jsonl_v2_resume_parity_and_corrupt_sidecar_fallback(&jsonl_root)?;
+    let parity_elapsed_us = elapsed_test_us(parity_start);
+
+    let index_start = test_timing_start();
+    let indexed_rows = concurrent_save_resume_index_chaos(&index_root)?;
+    let index_elapsed_us = elapsed_test_us(index_start);
+
+    let report = json!({
+        "schema": "pi.session_store_v2.chaos_lane.v1",
+        "bead": "bd-e5le6.8",
+        "status": "pass",
+        "coverage": {
+            "concurrent_save_resume": true,
+            "session_index_stale_refresh": true,
+            "store_v2_recoverable_index_rebuild": true,
+            "corrupt_sidecar_jsonl_fallback": true,
+            "jsonl_v2_resume_parity": true,
+        },
+        "parity_and_fallback": parity,
+        "session_index": {
+            "indexed_rows_after_concurrent_workers": indexed_rows,
+            "root": index_root.display().to_string(),
+        },
+        "timings_us": {
+            "parity_and_fallback": parity_elapsed_us,
+            "concurrent_index": index_elapsed_us,
+            "total": elapsed_test_us(total_start),
+        }
+    });
+    let evidence_path = emit_session_store_v2_recovery_evidence(&report)?;
+    assert!(
+        evidence_path.exists(),
+        "chaos lane evidence was not emitted at {}",
+        evidence_path.display()
+    );
+    println!(
+        "session store v2 chaos lane evidence: {}",
         evidence_path.display()
     );
 
