@@ -61,6 +61,8 @@ AUTOPILOT_PLAN_SCHEMA = "pi.swarm.autopilot_plan.v1"
 AUTOPILOT_PLAN_CONTRACT_SCHEMA = "pi.swarm.autopilot_plan_contract.v1"
 ACTION_PLAN_SCHEMA = "pi.swarm.action_plan.v1"
 ACTION_PLAN_CONTRACT_SCHEMA = "pi.swarm.action_plan_contract.v1"
+WORK_ADMISSION_GATE_SCHEMA = "pi.swarm.work_admission_gate.v1"
+WORK_ADMISSION_GATE_CONTRACT_SCHEMA = "pi.swarm.work_admission_gate_contract.v1"
 BUDGET_DRIFT_SCHEMA = "pi.swarm.budget_drift.v1"
 AUTOPILOT_HANDOFF_SCHEMA = "pi.swarm.autopilot_handoff.v1"
 AUTOPILOT_E2E_SCHEMA = "pi.swarm.autopilot_e2e.v1"
@@ -84,6 +86,9 @@ AUTOPILOT_INPUT_PACK_CONTRACT_PATH = Path(
 )
 AUTOPILOT_PLAN_CONTRACT_PATH = Path("docs/contracts/swarm-autopilot-plan-contract.json")
 ACTION_PLAN_CONTRACT_PATH = Path("docs/contracts/swarm-action-plan-contract.json")
+WORK_ADMISSION_GATE_CONTRACT_PATH = Path(
+    "docs/contracts/swarm-work-admission-gate-contract.json"
+)
 AUTOPILOT_DECISION_GATE_CONTRACT_PATH = Path(
     "docs/contracts/swarm-autopilot-decision-gate-contract.json"
 )
@@ -247,6 +252,21 @@ ACTION_PLAN_COMMAND_SAFETY_CLASSES = (
     "evidence_capture",
     "beads_mutation_requires_operator",
 )
+WORK_ADMISSION_GATE_ALLOWED_DECISIONS = (
+    "proceed_with_implementation",
+    "create_or_refine_bead",
+    "renew_evidence",
+    "wait",
+    "pause_escalate",
+)
+WORK_ADMISSION_GATE_ALLOWED_STATUSES = ("admit", "limited", "wait", "blocked")
+ACTION_PLAN_TO_WORK_ADMISSION_DECISION = {
+    "implement_ready_work": "proceed_with_implementation",
+    "create_or_refine_beads": "create_or_refine_bead",
+    "renew_stale_evidence": "renew_evidence",
+    "wait_for_pressure": "wait",
+    "pause_or_surface_blocker": "pause_escalate",
+}
 AUTOPILOT_TO_ACTION_PLAN_DECISION = {
     "claim_ready_bead": "implement_ready_work",
     "create_or_refine_backlog": "create_or_refine_beads",
@@ -5990,6 +6010,246 @@ def build_swarm_action_plan(
     return action_plan
 
 
+def work_admission_evidence_counts(input_pack: dict[str, Any]) -> dict[str, int]:
+    counts = {
+        "required_stale": 0,
+        "required_blocker": 0,
+        "required_missing": 0,
+    }
+    for item in input_pack.get("source_classification", []):
+        if not isinstance(item, dict) or item.get("required") is not True:
+            continue
+        classification = item.get("classification")
+        if classification == "stale":
+            counts["required_stale"] += 1
+        elif classification == "blocker":
+            counts["required_blocker"] += 1
+        elif classification == "missing":
+            counts["required_missing"] += 1
+    return counts
+
+
+def work_admission_status_for_decision(decision: str) -> str:
+    if decision == "proceed_with_implementation":
+        return "admit"
+    if decision in {"create_or_refine_bead", "renew_evidence"}:
+        return "limited"
+    if decision == "wait":
+        return "wait"
+    return "blocked"
+
+
+def work_admission_validation_broker_signal(input_pack: dict[str, Any]) -> dict[str, Any]:
+    validation_broker = normalized_section(input_pack, "validation_broker")
+    if not validation_broker:
+        return {"status": "not_provided", "source_status": "not_provided"}
+    stale = (
+        validation_broker.get("stale_build_warnings")
+        if isinstance(validation_broker.get("stale_build_warnings"), dict)
+        else {}
+    )
+    return {
+        "status": validation_broker.get("status"),
+        "source_status": validation_broker.get("source_status"),
+        "stale_build_warning_count": int_value(stale.get("count")) or 0,
+        "recommended_next_actions": bounded(
+            validation_broker.get("recommended_next_actions") or [],
+            8,
+        ),
+    }
+
+
+def work_admission_source_signals(input_pack: dict[str, Any]) -> dict[str, Any]:
+    beads = normalized_section(input_pack, "beads")
+    beads_ready = normalized_section(input_pack, "beads_ready")
+    agent_mail = normalized_section(input_pack, "agent_mail")
+    cargo = normalized_section(input_pack, "cargo_admission")
+    queue_forecast = (
+        cargo.get("queue_forecast") if isinstance(cargo.get("queue_forecast"), dict) else {}
+    )
+    git_state = normalized_section(input_pack, "git_state")
+    return {
+        "beads": {
+            "ready_count": int_value(beads_ready.get("ready_count")) or 0,
+            "active_count": int_value(beads.get("active_count")) or 0,
+            "open_candidate_count": int_value(beads.get("open_candidate_count")) or 0,
+            "deferred_planning_count": int_value(
+                beads.get("deferred_planning_count")
+            ) or 0,
+        },
+        "agent_mail": {
+            "status": agent_mail.get("status"),
+            "read_status": agent_mail.get("read_status"),
+            "reservation_status": agent_mail.get("reservation_status"),
+            "fallback_action": agent_mail.get("fallback_action"),
+        },
+        "rch": {
+            "decision": cargo.get("decision"),
+            "queue_recommended_action": queue_forecast.get("recommended_action"),
+            "slot_pressure": queue_forecast.get("slot_pressure"),
+            "queue_depth": queue_forecast.get("queue_depth"),
+        },
+        "git": {
+            "dirty": git_state.get("dirty"),
+            "change_count": git_state.get("change_count"),
+            "branch": git_state.get("branch"),
+            "upstream": git_state.get("upstream"),
+        },
+        "validation_broker": work_admission_validation_broker_signal(input_pack),
+        "evidence": work_admission_evidence_counts(input_pack),
+    }
+
+
+def work_admission_validation_failure(
+    input_pack: dict[str, Any],
+    autopilot_plan: dict[str, Any],
+) -> dict[str, Any] | None:
+    return action_plan_validation_failure(input_pack, autopilot_plan)
+
+
+def work_admission_required_signal_blockers(
+    input_pack: dict[str, Any],
+    action_plan: dict[str, Any],
+    autopilot_plan: dict[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    next_decision = str(
+        action_plan.get("next_safest_action", {}).get("decision")
+        or "pause_or_surface_blocker"
+    )
+    evidence_counts = work_admission_evidence_counts(input_pack)
+    if evidence_counts["required_blocker"] or evidence_counts["required_missing"]:
+        blockers.append("required_evidence_missing_or_blocked")
+    validation_failure = work_admission_validation_failure(input_pack, autopilot_plan)
+    if validation_failure is not None:
+        blockers.append("active_validation_failure")
+    validation_broker = work_admission_validation_broker_signal(input_pack)
+    validation_status = str(validation_broker.get("status") or "")
+    validation_source_status = str(validation_broker.get("source_status") or "")
+    if validation_status in {"blocked", "degraded", "failed", "error", "unavailable"}:
+        blockers.append("validation_broker_degraded")
+    if validation_source_status in {"blocked", "degraded", "failed", "error", "unavailable"}:
+        blockers.append("validation_broker_source_degraded")
+    if next_decision != "implement_ready_work":
+        return sorted(set(blockers))
+
+    agent_mail = normalized_section(input_pack, "agent_mail")
+    if agent_mail.get("status") != "ok":
+        blockers.append("ownership_signal_unavailable")
+    cargo = normalized_section(input_pack, "cargo_admission")
+    queue_forecast = (
+        cargo.get("queue_forecast") if isinstance(cargo.get("queue_forecast"), dict) else {}
+    )
+    if cargo.get("decision") in {"backoff", "degraded", "deny"}:
+        blockers.append("rch_admission_not_green")
+    if queue_forecast.get("recommended_action") == "backoff":
+        blockers.append("rch_queue_backoff")
+    git_state = normalized_section(input_pack, "git_state")
+    if git_state.get("dirty") is True:
+        blockers.append("dirty_worktree_before_implementation")
+    return sorted(set(blockers))
+
+
+def derive_work_admission_decision(
+    input_pack: dict[str, Any],
+    autopilot_plan: dict[str, Any],
+    action_plan: dict[str, Any],
+) -> dict[str, Any]:
+    next_action = action_plan.get("next_safest_action")
+    if not isinstance(next_action, dict):
+        next_action = {}
+    source_decision = str(next_action.get("decision") or "pause_or_surface_blocker")
+    decision = ACTION_PLAN_TO_WORK_ADMISSION_DECISION.get(
+        source_decision,
+        "pause_escalate",
+    )
+    blockers = work_admission_required_signal_blockers(
+        input_pack,
+        action_plan,
+        autopilot_plan,
+    )
+    evidence_counts = work_admission_evidence_counts(input_pack)
+    if "active_validation_failure" in blockers:
+        decision = "pause_escalate"
+    elif evidence_counts["required_blocker"] or evidence_counts["required_missing"]:
+        decision = "pause_escalate"
+    elif evidence_counts["required_stale"]:
+        decision = "renew_evidence"
+    elif decision == "proceed_with_implementation" and blockers:
+        decision = "wait" if blockers == ["ownership_signal_unavailable"] else "pause_escalate"
+    status = work_admission_status_for_decision(decision)
+    admit_new_implementation = decision == "proceed_with_implementation" and not blockers
+    return {
+        "decision": decision,
+        "status": status,
+        "source_action_plan_decision": source_decision,
+        "source_action": next_action.get("source_action"),
+        "rank": next_action.get("rank"),
+        "title": next_action.get("title"),
+        "severity": next_action.get("severity"),
+        "confidence": next_action.get("confidence"),
+        "rationale": next_action.get("rationale"),
+        "blockers": blockers,
+        "evidence_paths": list(next_action.get("evidence_paths") or []),
+        "command_safety_classes": list(next_action.get("command_safety_classes") or []),
+        "admit_new_implementation": admit_new_implementation,
+        "admit_coordination_work": decision in {
+            "create_or_refine_bead",
+            "renew_evidence",
+        },
+        "commands_require_operator_execution": True,
+    }
+
+
+def build_work_admission_gate(
+    input_pack: dict[str, Any],
+    autopilot_plan: dict[str, Any],
+    action_plan: dict[str, Any],
+    *,
+    max_items: int,
+) -> dict[str, Any]:
+    if input_pack.get("schema") != AUTOPILOT_INPUT_PACK_SCHEMA:
+        raise RunpackError(
+            "work admission gate requires "
+            f"{AUTOPILOT_INPUT_PACK_SCHEMA}, got {input_pack.get('schema')}"
+        )
+    if autopilot_plan.get("schema") != AUTOPILOT_PLAN_SCHEMA:
+        raise RunpackError(
+            "work admission gate requires "
+            f"{AUTOPILOT_PLAN_SCHEMA}, got {autopilot_plan.get('schema')}"
+        )
+    if action_plan.get("schema") != ACTION_PLAN_SCHEMA:
+        raise RunpackError(
+            "work admission gate requires "
+            f"{ACTION_PLAN_SCHEMA}, got {action_plan.get('schema')}"
+        )
+    decision = derive_work_admission_decision(input_pack, autopilot_plan, action_plan)
+    gate = {
+        "schema": WORK_ADMISSION_GATE_SCHEMA,
+        "generated_at": input_pack.get("generated_at"),
+        "status": decision["status"],
+        "purpose": "fail_closed_swarm_work_admission_gate_not_source_of_truth",
+        "input_pack_schema": input_pack.get("schema"),
+        "source_plan_schema": autopilot_plan.get("schema"),
+        "action_plan_schema": action_plan.get("schema"),
+        "decision": decision,
+        "source_signals": work_admission_source_signals(input_pack),
+        "failure_actions": bounded(autopilot_plan.get("failure_actions") or [], max_items),
+        "degraded_reasons": bounded(input_pack.get("degraded_reasons") or [], max_items),
+        "forbidden_actions": list(AUTOPILOT_FORBIDDEN_ACTIONS),
+        "gate_guards": {
+            "fail_closed": True,
+            "dry_run_only": True,
+            "no_source_mutation": True,
+            "commands_require_operator_execution": True,
+            "does_not_replace_beads_agent_mail_rch_validation_broker_doctor_or_ci": True,
+        },
+        "redaction_summary": input_pack.get("redaction_summary"),
+    }
+    assert_work_admission_gate_contract(gate)
+    return gate
+
+
 def int_value(value: Any) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -6838,6 +7098,21 @@ def write_action_plan_output(
     output_path.write_text(json_dumps(action_plan, pretty=True), encoding="utf-8")
 
 
+def write_work_admission_gate_output(
+    args: argparse.Namespace,
+    gate: dict[str, Any],
+) -> None:
+    output_path = getattr(args, "out_work_admission_gate_json", None)
+    if output_path is None:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        raise RunpackError(
+            f"refusing to overwrite existing work admission gate: {output_path}"
+        )
+    output_path.write_text(json_dumps(gate, pretty=True), encoding="utf-8")
+
+
 def artifact_path(value: Path | None) -> str | None:
     return str(value) if value is not None else None
 
@@ -7318,6 +7593,48 @@ def assert_action_plan_contract(action_plan: dict[str, Any]) -> None:
     for guard in contract.get("required_true_guards", []):
         assert guards.get(guard) is True, f"action plan guard must be true: {guard}"
     assert set(action_plan.get("forbidden_actions", [])).issuperset(
+        set(contract.get("required_forbidden_actions", []))
+    )
+
+
+def assert_work_admission_gate_contract(gate: dict[str, Any]) -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    contract_path = repo_root / WORK_ADMISSION_GATE_CONTRACT_PATH
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise AssertionError(f"missing work admission gate contract: {contract_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"work admission gate contract is malformed JSON: {contract_path}: {exc}"
+        ) from exc
+    assert contract.get("schema") == WORK_ADMISSION_GATE_CONTRACT_SCHEMA
+    assert contract.get("work_admission_gate_schema") == WORK_ADMISSION_GATE_SCHEMA
+    assert gate.get("schema") == contract["work_admission_gate_schema"]
+    assert gate.get("purpose") == contract.get("purpose")
+    assert gate.get("status") in set(contract.get("allowed_statuses", []))
+    for key in contract.get("required_top_level_keys", []):
+        assert key in gate, f"missing top-level work admission gate key: {key}"
+    decision = gate.get("decision")
+    assert isinstance(decision, dict)
+    for key in contract.get("required_decision_fields", []):
+        assert key in decision, f"missing work admission decision key: {key}"
+    assert decision.get("decision") in set(contract.get("allowed_decisions", []))
+    assert decision.get("status") in set(contract.get("allowed_statuses", []))
+    assert isinstance(decision.get("blockers"), list)
+    if decision.get("admit_new_implementation") is True:
+        assert decision.get("decision") == "proceed_with_implementation"
+        assert decision.get("blockers") == []
+    assert decision.get("commands_require_operator_execution") is True
+    source_signals = gate.get("source_signals")
+    assert isinstance(source_signals, dict)
+    for key in contract.get("required_source_signal_keys", []):
+        assert key in source_signals, f"missing source signal key: {key}"
+    guards = gate.get("gate_guards")
+    assert isinstance(guards, dict)
+    for guard in contract.get("required_true_guards", []):
+        assert guards.get(guard) is True, f"work admission gate guard must be true: {guard}"
+    assert set(gate.get("forbidden_actions", [])).issuperset(
         set(contract.get("required_forbidden_actions", []))
     )
 
@@ -8173,6 +8490,7 @@ def build_autopilot_e2e_summary(
         commands: list[dict[str, Any]],
         expected_actions: list[str],
         expected_action_plan_decision: str | None = None,
+        expected_work_admission_decision: str | None = None,
         cargo_payload: dict[str, Any] | None = None,
         agent_mail_payload: dict[str, Any] | None = None,
         git_payload: dict[str, Any] | None = None,
@@ -8216,11 +8534,23 @@ def build_autopilot_e2e_summary(
         input_pack = build_autopilot_input_pack(args)
         plan = build_autopilot_plan(input_pack, max_items=max_items)
         action_plan = build_swarm_action_plan(input_pack, plan, max_items=max_items)
+        work_admission_gate = build_work_admission_gate(
+            input_pack,
+            plan,
+            action_plan,
+            max_items=max_items,
+        )
         if expected_action_plan_decision is not None:
             actual_decision = action_plan["next_safest_action"]["decision"]
             assert actual_decision == expected_action_plan_decision, (
                 f"{scenario_id} action plan decision mismatch: "
                 f"expected {expected_action_plan_decision}, got {actual_decision}"
+            )
+        if expected_work_admission_decision is not None:
+            actual_work_decision = work_admission_gate["decision"]["decision"]
+            assert actual_work_decision == expected_work_admission_decision, (
+                f"{scenario_id} work admission decision mismatch: "
+                f"expected {expected_work_admission_decision}, got {actual_work_decision}"
             )
         result = autopilot_e2e_result_from_plan(
             scenario_id=scenario_id,
@@ -8240,6 +8570,15 @@ def build_autopilot_e2e_summary(
             "command_safety_classes": action_plan["next_safest_action"][
                 "command_safety_classes"
             ],
+        }
+        result["work_admission_gate"] = {
+            "schema": work_admission_gate["schema"],
+            "status": work_admission_gate["status"],
+            "decision": work_admission_gate["decision"]["decision"],
+            "admit_new_implementation": work_admission_gate["decision"][
+                "admit_new_implementation"
+            ],
+            "blockers": work_admission_gate["decision"]["blockers"],
         }
         results.append(result)
         return input_pack, plan, result
@@ -8264,6 +8603,7 @@ def build_autopilot_e2e_summary(
         commands=ready_commands,
         expected_actions=["claim_ready_bead"],
         expected_action_plan_decision="implement_ready_work",
+        expected_work_admission_decision="proceed_with_implementation",
     )
 
     empty_beads, empty_ready, empty_commands = build_real_beads_sources(
@@ -8279,6 +8619,7 @@ def build_autopilot_e2e_summary(
         commands=empty_commands,
         expected_actions=["run_docs_only_work"],
         expected_action_plan_decision="create_or_refine_beads",
+        expected_work_admission_decision="create_or_refine_bead",
     )
     deferred_roadmap_payload = {
         "issues": [
@@ -8311,6 +8652,7 @@ def build_autopilot_e2e_summary(
         commands=empty_commands,
         expected_actions=["create_or_refine_backlog"],
         expected_action_plan_decision="create_or_refine_beads",
+        expected_work_admission_decision="create_or_refine_bead",
     )
 
     degraded_mail_commands = list(ready_commands) + [
@@ -8333,6 +8675,7 @@ def build_autopilot_e2e_summary(
         commands=degraded_mail_commands,
         expected_actions=["use_beads_soft_lock"],
         expected_action_plan_decision="wait_for_pressure",
+        expected_work_admission_decision="wait",
         agent_mail_payload=load_shared_agent_mail_schema_corrupt_fixture(
             generated_at=generated_at,
         ),
@@ -8358,6 +8701,7 @@ def build_autopilot_e2e_summary(
         ],
         expected_actions=["adjust_swarm_budget", "wait_for_rch"],
         expected_action_plan_decision="wait_for_pressure",
+        expected_work_admission_decision="wait",
         cargo_payload=autopilot_e2e_cargo_payload(
             decision="backoff",
             queue_action="backoff",
@@ -8582,6 +8926,7 @@ def build_autopilot_e2e_summary(
             "plan_new_bead",
         ],
         expected_action_plan_decision="wait_for_pressure",
+        expected_work_admission_decision="wait",
         cargo_payload=dry_run_cargo,
         agent_mail_payload=dry_run_mail,
         git_status_file=dry_run_git_path,
@@ -8673,6 +9018,7 @@ def build_autopilot_e2e_summary(
         commands=dirty_git_commands + empty_commands,
         expected_actions=["capture_handoff"],
         expected_action_plan_decision="pause_or_surface_blocker",
+        expected_work_admission_decision="pause_escalate",
         git_status_file=dirty_git_path,
     )
 
@@ -8687,6 +9033,7 @@ def build_autopilot_e2e_summary(
         commands=ready_commands,
         expected_actions=["stop_and_surface_blocker"],
         expected_action_plan_decision="renew_stale_evidence",
+        expected_work_admission_decision="renew_evidence",
         agent_mail_payload=stale_mail_payload,
     )
     stale_classifications = [
@@ -8720,6 +9067,7 @@ def build_autopilot_e2e_summary(
         commands=validation_failure_commands,
         expected_actions=["claim_ready_bead"],
         expected_action_plan_decision="pause_or_surface_blocker",
+        expected_work_admission_decision="pause_escalate",
     )
     assert validation_input["capture"]["status"] == "degraded"
     assert any(
@@ -8794,6 +9142,13 @@ def build_autopilot_e2e_summary(
                     "source_action": "fail_closed",
                     "command_safety_classes": ["read_only_probe"],
                 },
+                "work_admission_gate": {
+                    "schema": WORK_ADMISSION_GATE_SCHEMA,
+                    "status": "blocked",
+                    "decision": "pause_escalate",
+                    "admit_new_implementation": False,
+                    "blockers": ["malformed_required_source"],
+                },
             }
         )
     else:
@@ -8843,6 +9198,15 @@ def assert_autopilot_e2e_summary(summary: dict[str, Any]) -> None:
         assert action_plan.get("decision") in ACTION_PLAN_ALLOWED_DECISIONS
         assert action_plan.get("status") in ACTION_PLAN_ALLOWED_STATUSES
         assert isinstance(action_plan.get("command_safety_classes"), list)
+        work_admission_gate = scenario.get("work_admission_gate")
+        assert isinstance(work_admission_gate, dict)
+        assert work_admission_gate.get("schema") == WORK_ADMISSION_GATE_SCHEMA
+        assert work_admission_gate.get("decision") in WORK_ADMISSION_GATE_ALLOWED_DECISIONS
+        assert work_admission_gate.get("status") in WORK_ADMISSION_GATE_ALLOWED_STATUSES
+        assert isinstance(work_admission_gate.get("blockers"), list)
+        if work_admission_gate.get("admit_new_implementation") is True:
+            assert work_admission_gate.get("decision") == "proceed_with_implementation"
+            assert work_admission_gate.get("blockers") == []
     events_path = Path(str(summary.get("events_jsonl")))
     assert events_path.exists(), f"missing autopilot E2E events JSONL: {events_path}"
     events = [
@@ -13842,6 +14206,11 @@ def parse_args() -> argparse.Namespace:
         help="write pi.swarm.action_plan.v1 JSON; refuses to overwrite",
     )
     parser.add_argument(
+        "--out-work-admission-gate-json",
+        type=Path,
+        help="write pi.swarm.work_admission_gate.v1 JSON; refuses to overwrite",
+    )
+    parser.add_argument(
         "--run-autopilot-e2e",
         action="store_true",
         help="run no-mock swarm autopilot E2E scenarios with JSONL evidence",
@@ -13931,6 +14300,11 @@ def parse_args() -> argparse.Namespace:
         "--print-action-plan",
         action="store_true",
         help="print the dry-run swarm action plan JSON",
+    )
+    parser.add_argument(
+        "--print-work-admission-gate",
+        action="store_true",
+        help="print the fail-closed swarm work admission gate JSON",
     )
     parser.add_argument("--self-test", action="store_true", help="run fixture-backed self-test")
     return parser.parse_args()
@@ -14049,6 +14423,7 @@ def main() -> int:
         input_pack: dict[str, Any] | None = None
         plan: dict[str, Any] | None = None
         action_plan: dict[str, Any] | None = None
+        work_admission_gate: dict[str, Any] | None = None
         if (
             args.out_autopilot_input_pack_json
             or args.print_autopilot_input_pack
@@ -14056,6 +14431,8 @@ def main() -> int:
             or args.print_autopilot_plan
             or args.out_action_plan_json
             or args.print_action_plan
+            or args.out_work_admission_gate_json
+            or args.print_work_admission_gate
         ):
             input_pack = build_autopilot_input_pack(args)
             if (
@@ -14063,11 +14440,19 @@ def main() -> int:
                 or args.print_autopilot_plan
                 or args.out_action_plan_json
                 or args.print_action_plan
+                or args.out_work_admission_gate_json
+                or args.print_work_admission_gate
             ):
                 plan = build_autopilot_plan(input_pack, max_items=args.max_items)
                 action_plan = build_swarm_action_plan(
                     input_pack,
                     plan,
+                    max_items=args.max_items,
+                )
+                work_admission_gate = build_work_admission_gate(
+                    input_pack,
+                    plan,
+                    action_plan,
                     max_items=args.max_items,
                 )
                 runpack["autopilot_handoff"] = build_autopilot_handoff_summary(
@@ -14088,6 +14473,10 @@ def main() -> int:
             write_action_plan_output(args, action_plan)
             if args.print_action_plan:
                 print(json_dumps(action_plan, pretty=True))
+        if work_admission_gate is not None:
+            write_work_admission_gate_output(args, work_admission_gate)
+            if args.print_work_admission_gate:
+                print(json_dumps(work_admission_gate, pretty=True))
     except (RunpackError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -14097,11 +14486,13 @@ def main() -> int:
         and not args.out_autopilot_input_pack_json
         and not args.out_autopilot_plan_json
         and not args.out_action_plan_json
+        and not args.out_work_admission_gate_json
         and not args.out_context_intelligence_final_gate_json
         and not args.out_runtime_intelligence_final_gate_json
         and not args.print_autopilot_input_pack
         and not args.print_autopilot_plan
         and not args.print_action_plan
+        and not args.print_work_admission_gate
         and not args.print_context_intelligence_final_gate
         and not args.print_runtime_intelligence_final_gate
     ):
