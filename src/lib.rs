@@ -150,6 +150,8 @@ pub mod migrations;
 #[doc(hidden)]
 pub mod model;
 #[doc(hidden)]
+pub mod model_routing;
+#[doc(hidden)]
 pub mod model_selector;
 #[doc(hidden)]
 pub mod models;

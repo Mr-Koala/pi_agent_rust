@@ -2,16 +2,26 @@
 //!
 //! This is used by the interactive TUI to present a searchable list of models.
 
+use crate::model_routing::{ModelRoutingEvidence, routing_key};
 use crate::models::ModelEntry;
 use crate::provider_metadata::provider_metadata;
+use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModelKey {
     pub provider: String,
     pub id: String,
 }
 
 impl ModelKey {
+    #[must_use]
+    pub fn from_entry(entry: &ModelEntry) -> Self {
+        Self {
+            provider: entry.model.provider.clone(),
+            id: entry.model.id.clone(),
+        }
+    }
+
     #[must_use]
     pub fn full_id(&self) -> String {
         format!("{}/{}", self.provider, self.id)
@@ -27,6 +37,7 @@ pub struct ModelSelectorOverlay {
     max_visible: usize,
     source_total: usize,
     configured_only: bool,
+    routing_evidence: BTreeMap<(String, String), ModelRoutingEvidence>,
 }
 
 impl ModelSelectorOverlay {
@@ -54,6 +65,7 @@ impl ModelSelectorOverlay {
             max_visible: 10,
             source_total,
             configured_only: false,
+            routing_evidence: BTreeMap::new(),
         };
         selector.refresh_filtered();
         selector
@@ -167,6 +179,22 @@ impl ModelSelectorOverlay {
     pub fn set_configured_only_scope(&mut self, source_total: usize) {
         self.configured_only = true;
         self.source_total = source_total.max(self.all.len());
+    }
+
+    pub fn set_routing_evidence<I>(&mut self, evidence: I)
+    where
+        I: IntoIterator<Item = ModelRoutingEvidence>,
+    {
+        self.routing_evidence.clear();
+        for item in evidence {
+            self.routing_evidence.insert(item.routing_key(), item);
+        }
+    }
+
+    #[must_use]
+    pub fn routing_evidence_for(&self, key: &ModelKey) -> Option<&ModelRoutingEvidence> {
+        self.routing_evidence
+            .get(&routing_key(&key.provider, &key.id))
     }
 
     #[must_use]

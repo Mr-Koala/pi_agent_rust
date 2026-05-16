@@ -241,7 +241,19 @@ impl PiApp {
                     let full = key.full_id();
                     let is_current = full.eq_ignore_ascii_case(&current_full);
                     let marker = if is_current { " *" } else { "" };
-                    let row = format!("{prefix} {full}{marker}");
+                    let mut row =
+                        String::with_capacity(prefix.len() + 1 + full.len() + marker.len() + 32);
+                    row.push_str(prefix);
+                    row.push(' ');
+                    row.push_str(&full);
+                    row.push_str(marker);
+                    if let Some(badge) = selector
+                        .routing_evidence_for(key)
+                        .and_then(crate::model_routing::ModelRoutingEvidence::row_badge)
+                    {
+                        row.push(' ');
+                        row.push_str(&badge);
+                    }
                     let rendered = if is_selected {
                         self.styles.accent_bold.render(&row)
                     } else if is_current {
@@ -294,6 +306,17 @@ impl PiApp {
                         .muted
                         .render(&format!("Model Name: {}", entry.model.name))
                 );
+
+                if let Some(evidence) = selector.routing_evidence_for(selected) {
+                    let summary = evidence
+                        .row_badge()
+                        .unwrap_or_else(|| format!("[{}]", evidence.decision.short_label()));
+                    let _ = writeln!(
+                        output,
+                        "  {}",
+                        self.styles.muted.render(&format!("Routing: {summary}"))
+                    );
+                }
             }
         }
 
@@ -595,5 +618,44 @@ mod tests {
 
         assert!(ids.iter().any(|id| id == "acme-local/dev-model"));
         assert!(!ids.iter().any(|id| id == "acme-remote/cloud-model"));
+    }
+
+    #[test]
+    fn configured_only_selector_renders_degraded_routing_evidence() {
+        let mut keyless = model_entry("ollama", "llama3.2", None);
+        keyless.auth_header = false;
+
+        let mut requires_creds = model_entry("acme-remote", "cloud-model", None);
+        requires_creds.auth_header = true;
+
+        let mut app = build_test_app(keyless.clone(), vec![keyless.clone(), requires_creds]);
+        app.open_model_selector_configured_only();
+
+        let metrics = crate::model_routing::ProviderRoutingMetrics::new("ollama", 9_500, 12)
+            .for_model("llama3.2")
+            .with_latency_p95_ms(3_000)
+            .with_error_rate(0.01);
+        let evidence =
+            crate::model_routing::evaluate_model_routing(crate::model_routing::RoutingEvaluation {
+                model: &keyless,
+                metrics: Some(&metrics),
+                now_ms: 10_000,
+                configured_only_scope: true,
+                user_override: false,
+                thresholds: crate::model_routing::ProviderRoutingThresholds {
+                    degraded_latency_ms: 2_000,
+                    ..crate::model_routing::ProviderRoutingThresholds::default()
+                },
+            });
+        app.model_selector
+            .as_mut()
+            .expect("configured-only selector should open")
+            .set_routing_evidence([evidence]);
+
+        let selector = app.model_selector.as_ref().expect("selector");
+        let rendered = app.render_model_selector(selector);
+        assert!(rendered.contains("ollama/llama3.2 * [degraded: latency]"));
+        assert!(rendered.contains("Routing: [degraded: latency]"));
+        assert!(!rendered.contains("acme-remote/cloud-model"));
     }
 }
