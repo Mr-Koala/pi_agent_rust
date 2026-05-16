@@ -1,0 +1,423 @@
+{
+  "schema": "pi.operator.handoff_summary_fixtures.v1",
+  "scenarios": [
+    {
+      "id": "clean_handoff",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "project": {
+          "name": "pi_agent_rust",
+          "root": "/data/projects/pi_agent_rust"
+        },
+        "git": {
+          "branch": "main",
+          "head": "abc1234",
+          "upstream": "origin/main",
+          "ahead": 0,
+          "behind": 0,
+          "dirty_files": [],
+          "untracked_files": [],
+          "recent_commits": [
+            {
+              "id": "abc1234",
+              "summary": "Add extension quarantine rehearsal"
+            }
+          ]
+        },
+        "beads": {
+          "ready": [
+            {
+              "id": "bd-next",
+              "title": "Next ready bead"
+            }
+          ],
+          "in_progress": [],
+          "closed_recent": [
+            {
+              "id": "bd-63x3v.7.5",
+              "title": "Rehearse extension crash quarantine and rollback"
+            }
+          ],
+          "stalled_candidates": []
+        },
+        "validation": {
+          "status": "pass",
+          "gates": [
+            {
+              "id": "cargo_check_all_targets_rch",
+              "status": "pass",
+              "evidence": "rch exec -- cargo check --all-targets"
+            }
+          ]
+        },
+        "evidence_freshness": {
+          "status": "fresh",
+          "stale_artifacts": []
+        },
+        "agent_mail": {
+          "health": "green",
+          "semantic_readiness": "pass",
+          "reservations": [],
+          "ack_required": []
+        },
+        "rch": {
+          "status": "ok",
+          "active_jobs": []
+        },
+        "action_plan": {
+          "decisions": []
+        }
+      },
+      "expected": {
+        "status": "clean",
+        "markdown_contains": [
+          "Status: clean",
+          "Claim the next ready bead: bd-next.",
+          "bd-63x3v.7.5"
+        ],
+        "invariants": {
+          "git_worktree_clean": "pass",
+          "git_pushed": "pass",
+          "validation_gates": "pass",
+          "evidence_freshness": "pass"
+        }
+      }
+    },
+    {
+      "id": "dirty_worktree",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "git": {
+          "branch": "main",
+          "head": "abc1234",
+          "upstream": "origin/main",
+          "ahead": 0,
+          "behind": 0,
+          "dirty_files": [
+            "scripts/build_swarm_operator_runpack.py"
+          ],
+          "untracked_files": [
+            "docs/contracts/new-contract.json"
+          ]
+        },
+        "validation": {
+          "status": "pass",
+          "gates": [
+            {
+              "id": "py_compile",
+              "status": "pass"
+            }
+          ]
+        },
+        "evidence_freshness": {
+          "status": "fresh",
+          "stale_artifacts": []
+        },
+        "agent_mail": {
+          "health": "green",
+          "semantic_readiness": "pass",
+          "reservations": [],
+          "ack_required": []
+        },
+        "rch": {
+          "status": "ok",
+          "active_jobs": []
+        },
+        "action_plan": {
+          "decisions": []
+        }
+      },
+      "expected": {
+        "status": "watch",
+        "markdown_contains": [
+          "Status: watch",
+          "Do not overwrite dirty path without ownership: scripts/build_swarm_operator_runpack.py"
+        ],
+        "invariants": {
+          "git_worktree_clean": "warn"
+        }
+      }
+    },
+    {
+      "id": "unpushed_commits",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "git": {
+          "branch": "main",
+          "head": "def5678",
+          "upstream": "origin/main",
+          "ahead": 2,
+          "behind": 0,
+          "dirty_files": [],
+          "untracked_files": []
+        },
+        "validation": {
+          "status": "pass",
+          "gates": []
+        },
+        "evidence_freshness": {
+          "status": "fresh",
+          "stale_artifacts": []
+        },
+        "agent_mail": {
+          "health": "green",
+          "semantic_readiness": "pass",
+          "reservations": [],
+          "ack_required": []
+        },
+        "rch": {
+          "status": "ok",
+          "active_jobs": []
+        },
+        "action_plan": {
+          "decisions": []
+        }
+      },
+      "expected": {
+        "status": "watch",
+        "markdown_contains": [
+          "ahead=2 behind=0",
+          "Push or rebase local commits"
+        ],
+        "invariants": {
+          "git_pushed": "warn"
+        }
+      }
+    },
+    {
+      "id": "expired_reservations",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "git": {
+          "branch": "main",
+          "head": "abc1234",
+          "upstream": "origin/main",
+          "ahead": 0,
+          "behind": 0,
+          "dirty_files": [],
+          "untracked_files": []
+        },
+        "validation": {
+          "status": "pass",
+          "gates": []
+        },
+        "evidence_freshness": {
+          "status": "fresh",
+          "stale_artifacts": []
+        },
+        "agent_mail": {
+          "health": "green",
+          "semantic_readiness": "pass",
+          "reservations": [
+            {
+              "id": "res-1",
+              "path": "src/extensions.rs",
+              "holder": "OtherAgent",
+              "status": "expired"
+            }
+          ],
+          "ack_required": []
+        },
+        "rch": {
+          "status": "ok",
+          "active_jobs": []
+        },
+        "action_plan": {
+          "decisions": []
+        }
+      },
+      "expected": {
+        "status": "watch",
+        "markdown_contains": [
+          "Refresh or release expired reservations",
+          "reservations_current: warn"
+        ],
+        "invariants": {
+          "reservations_current": "warn"
+        }
+      }
+    },
+    {
+      "id": "stale_evidence",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "git": {
+          "branch": "main",
+          "head": "abc1234",
+          "upstream": "origin/main",
+          "ahead": 0,
+          "behind": 0,
+          "dirty_files": [],
+          "untracked_files": []
+        },
+        "validation": {
+          "status": "pass",
+          "gates": []
+        },
+        "evidence_freshness": {
+          "status": "stale",
+          "stale_artifacts": [
+            {
+              "path": "docs/evidence/dropin-certification-verdict.json",
+              "age_hours": 96
+            }
+          ]
+        },
+        "agent_mail": {
+          "health": "green",
+          "semantic_readiness": "pass",
+          "reservations": [],
+          "ack_required": []
+        },
+        "rch": {
+          "status": "ok",
+          "active_jobs": []
+        },
+        "action_plan": {
+          "decisions": [
+            {
+              "id": "renew-dropin-verdict",
+              "decision": "renew_stale_evidence",
+              "status": "open"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": "blocked",
+        "markdown_contains": [
+          "Renew stale or missing evidence",
+          "renew-dropin-verdict"
+        ],
+        "invariants": {
+          "evidence_freshness": "block",
+          "action_plan_decisions": "warn"
+        }
+      }
+    },
+    {
+      "id": "failed_validation",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "git": {
+          "branch": "main",
+          "head": "abc1234",
+          "upstream": "origin/main",
+          "ahead": 0,
+          "behind": 0,
+          "dirty_files": [],
+          "untracked_files": []
+        },
+        "validation": {
+          "status": "fail",
+          "gates": [
+            {
+              "id": "cargo_clippy_all_targets_rch",
+              "status": "fail",
+              "evidence": "clippy.log"
+            }
+          ]
+        },
+        "evidence_freshness": {
+          "status": "fresh",
+          "stale_artifacts": []
+        },
+        "agent_mail": {
+          "health": "red",
+          "semantic_readiness": "fail",
+          "reservations": [],
+          "ack_required": [
+            {
+              "id": "msg-1",
+              "subject": "Please ack"
+            }
+          ]
+        },
+        "rch": {
+          "status": "degraded",
+          "active_jobs": [
+            {
+              "id": "job-1",
+              "command": "cargo clippy"
+            }
+          ]
+        },
+        "action_plan": {
+          "decisions": []
+        }
+      },
+      "expected": {
+        "status": "blocked",
+        "markdown_contains": [
+          "Fix or rerun the failed validation gates",
+          "cargo_clippy_all_targets_rch"
+        ],
+        "invariants": {
+          "validation_gates": "block",
+          "agent_mail_usable": "warn",
+          "rch_available": "warn"
+        }
+      }
+    },
+    {
+      "id": "redaction",
+      "input": {
+        "schema": "pi.operator.handoff_summary_input.v1",
+        "git": {
+          "branch": "main",
+          "head": "abc1234",
+          "upstream": "origin/main",
+          "ahead": 0,
+          "behind": 0,
+          "dirty_files": [],
+          "untracked_files": []
+        },
+        "validation": {
+          "status": "pass",
+          "gates": [
+            {
+              "id": "secret_gate",
+              "status": "pass",
+              "evidence": "authorization=super-secret-token"
+            }
+          ]
+        },
+        "evidence_freshness": {
+          "status": "fresh",
+          "stale_artifacts": []
+        },
+        "agent_mail": {
+          "health": "green",
+          "semantic_readiness": "pass",
+          "reservations": [],
+          "ack_required": []
+        },
+        "rch": {
+          "status": "ok",
+          "active_jobs": []
+        },
+        "action_plan": {
+          "decisions": []
+        },
+        "environment": {
+          "OPENAI_API_KEY": "sk-raw-secret",
+          "prompt_excerpt": "do not leak this prompt"
+        }
+      },
+      "expected": {
+        "status": "clean",
+        "markdown_contains": [
+          "secret_gate: pass [REDACTED]"
+        ],
+        "json_not_contains": [
+          "super-secret-token",
+          "sk-raw-secret",
+          "do not leak this prompt"
+        ],
+        "invariants": {
+          "validation_gates": "pass"
+        }
+      }
+    }
+  ]
+}
