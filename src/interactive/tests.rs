@@ -1,12 +1,14 @@
 use super::*;
 use crate::agent::AgentConfig;
-use crate::model::StreamEvent;
+use crate::model::{ContentBlock, StreamEvent, TextContent};
 use crate::provider::{Context, Provider, StreamOptions};
 use crate::resources::{ResourceCliOptions, ResourceLoader};
 use crate::tools::ToolRegistry;
 use asupersync::channel::mpsc;
 use asupersync::runtime::RuntimeBuilder;
+use bubbletea::{KeyMsg, Message, WindowSizeMsg};
 use futures::stream;
+use serde_json::json;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
@@ -340,4 +342,250 @@ fn enter_submits_when_no_autocomplete_item_highlighted() {
         !app.autocomplete.open,
         "Enter with no selection should still close the dropdown"
     );
+}
+
+#[derive(Default)]
+struct TuiDegradationDrillTrace {
+    event_count: usize,
+    redraw_count: usize,
+    coalesced_count: usize,
+    preserved_input_count: usize,
+    max_rendered_rows: usize,
+}
+
+impl TuiDegradationDrillTrace {
+    fn event(&mut self) {
+        self.event_count += 1;
+    }
+
+    fn render(&mut self, app: &PiApp) -> String {
+        let frame = app.view();
+        self.redraw_count += 1;
+        self.max_rendered_rows = self.max_rendered_rows.max(frame.lines().count());
+        frame
+    }
+
+    fn record_input_preserved(&mut self, before_len: usize, after: &str) {
+        self.preserved_input_count += after.len().saturating_sub(before_len);
+    }
+}
+
+fn pressure_tool_block(label: &str) -> ContentBlock {
+    let mut output = String::new();
+    for line in 0..32 {
+        output.push_str(label);
+        output.push_str(" line ");
+        output.push_str(&line.to_string());
+        output.push('\n');
+    }
+    ContentBlock::Text(TextContent::new(output))
+}
+
+fn semantic_visible(frame: &str, marker: &str) -> bool {
+    frame.contains(marker)
+}
+
+const PROVIDER_DELTA_COUNT: usize = 72;
+const THINKING_DELTA_COUNT: usize = 12;
+const TOOL_UPDATE_COUNT: usize = 18;
+const SESSION_BURST_COUNT: usize = 10;
+const FINAL_MARKER: &str = "semantic-provider-delta-71";
+const TOOL_MARKER: &str = "semantic-tool-final";
+const SESSION_MARKER: &str = "session write burst 9 committed";
+
+fn seed_normal_tui_load(app: &mut PiApp, trace: &mut TuiDegradationDrillTrace) {
+    app.messages.push(ConversationMessage::new(
+        MessageRole::User,
+        "normal-load prompt remains readable".to_string(),
+        None,
+    ));
+    app.messages.push(ConversationMessage::new(
+        MessageRole::Assistant,
+        "normal-load assistant reply remains readable".to_string(),
+        None,
+    ));
+    app.scroll_to_bottom();
+    trace.event_count += 2;
+    let normal_frame = trace.render(app);
+    assert!(semantic_visible(
+        &normal_frame,
+        "normal-load assistant reply"
+    ));
+}
+
+fn drive_provider_pressure(app: &mut PiApp, trace: &mut TuiDegradationDrillTrace) {
+    app.tui_pressure_frame_p99_us.store(
+        TuiPressureController::HIGH_FRAME_P99_US,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    app.handle_pi_message(PiMsg::AgentStart);
+    trace.event();
+    for idx in 0..PROVIDER_DELTA_COUNT {
+        let delta = format!("semantic-provider-delta-{idx} ");
+        app.handle_pi_message(PiMsg::TextDelta(delta));
+        trace.event();
+        if idx % 16 == 0 {
+            let frame = trace.render(app);
+            assert!(
+                semantic_visible(&frame, &format!("semantic-provider-delta-{idx}")),
+                "streaming provider delta must stay visible at idx {idx}"
+            );
+        }
+    }
+    for idx in 0..THINKING_DELTA_COUNT {
+        app.handle_pi_message(PiMsg::ThinkingDelta(format!("thinking-step-{idx} ")));
+        trace.event();
+    }
+}
+
+fn drive_tool_pressure(app: &mut PiApp, trace: &mut TuiDegradationDrillTrace) {
+    app.handle_pi_message(PiMsg::ToolStart {
+        name: "bash".to_string(),
+        tool_id: "tool-pressure".to_string(),
+    });
+    trace.event();
+    for idx in 0..TOOL_UPDATE_COUNT {
+        let label = if idx + 1 == TOOL_UPDATE_COUNT {
+            TOOL_MARKER
+        } else {
+            "low-value-tool-noise"
+        };
+        app.handle_pi_message(PiMsg::ToolUpdate {
+            name: "bash".to_string(),
+            tool_id: "tool-pressure".to_string(),
+            content: vec![pressure_tool_block(label)],
+            details: Some(json!({
+                "line_count": (idx + 1) * 32,
+                "byte_count": (idx + 1) * 512,
+            })),
+        });
+        trace.event();
+    }
+    trace.coalesced_count += TOOL_UPDATE_COUNT.saturating_sub(1);
+    app.handle_pi_message(PiMsg::ToolEnd {
+        name: "bash".to_string(),
+        tool_id: "tool-pressure".to_string(),
+        is_error: false,
+    });
+    trace.event();
+}
+
+fn drive_session_write_bursts(app: &mut PiApp, trace: &mut TuiDegradationDrillTrace) {
+    for idx in 0..SESSION_BURST_COUNT {
+        app.handle_pi_message(PiMsg::SystemNote(format!(
+            "session write burst {idx} committed"
+        )));
+        trace.event();
+    }
+}
+
+fn drive_resize_pressure(app: &mut PiApp, trace: &mut TuiDegradationDrillTrace) {
+    let _ = app.update(Message::new(WindowSizeMsg {
+        width: 92,
+        height: 26,
+    }));
+    trace.event();
+    let compact_frame = trace.render(app);
+    assert!(
+        compact_frame.lines().count() <= app.term_height,
+        "compact resize frame must not exceed terminal height"
+    );
+
+    let _ = app.update(Message::new(WindowSizeMsg {
+        width: 120,
+        height: 64,
+    }));
+    trace.event();
+}
+
+fn finish_agent_and_preserve_input(app: &mut PiApp, trace: &mut TuiDegradationDrillTrace) {
+    app.handle_pi_message(PiMsg::AgentDone {
+        usage: None,
+        stop_reason: StopReason::Stop,
+        error_message: None,
+    });
+    trace.event();
+
+    for key in ['o', 'k'] {
+        let before_len = app.input.value().len();
+        let _ = app.update(Message::new(KeyMsg::from_char(key)));
+        trace.event();
+        trace.record_input_preserved(before_len, &app.input.value());
+    }
+}
+
+fn assert_tui_degradation_evidence(app: &PiApp, trace: &mut TuiDegradationDrillTrace) {
+    let final_frame = trace.render(app);
+    let collapsed_tool_messages = app
+        .messages
+        .iter()
+        .filter(|message| message.role == MessageRole::Tool && message.collapsed)
+        .count();
+    let semantic_visible_count = [
+        semantic_visible(&final_frame, FINAL_MARKER),
+        semantic_visible(&final_frame, TOOL_MARKER),
+        semantic_visible(&final_frame, SESSION_MARKER),
+        app.input.value() == "ok",
+    ]
+    .into_iter()
+    .filter(|visible| *visible)
+    .count();
+    let frame_pressure = TuiPressureController::decide(
+        TuiPressureController::HIGH_FRAME_P99_US,
+        TuiPressureController::HIGH_TOOL_OUTPUT_BYTES,
+        TOOL_UPDATE_COUNT,
+    );
+    let evidence = json!({
+        "schema": "pi.tui.degradation_drill.v1",
+        "fixture": "sustained_event_pressure",
+        "event_count": trace.event_count,
+        "redraw_count": trace.redraw_count,
+        "coalesced_count": trace.coalesced_count,
+        "max_frame_budget_pressure": format!("{:?}", frame_pressure.level),
+        "max_rendered_rows": trace.max_rendered_rows,
+        "terminal_height": app.term_height,
+        "preserved_input_count": trace.preserved_input_count,
+        "semantic_visible_count": semantic_visible_count,
+        "collapsed_tool_message_count": collapsed_tool_messages,
+        "verdict": if semantic_visible_count == 4
+            && collapsed_tool_messages == 1
+            && trace.preserved_input_count == 2
+            && trace.max_rendered_rows <= app.term_height
+        {
+            "pass"
+        } else {
+            "fail_closed"
+        },
+    });
+
+    assert_eq!(evidence["schema"], "pi.tui.degradation_drill.v1");
+    assert_eq!(evidence["event_count"], 122);
+    assert_eq!(evidence["redraw_count"], 8);
+    assert_eq!(evidence["coalesced_count"], TOOL_UPDATE_COUNT - 1);
+    assert_eq!(evidence["max_frame_budget_pressure"], "High");
+    assert_eq!(evidence["preserved_input_count"], 2);
+    assert_eq!(evidence["collapsed_tool_message_count"], 1);
+    assert_eq!(evidence["semantic_visible_count"], 4);
+    assert_eq!(
+        evidence["verdict"], "pass",
+        "degradation evidence: {evidence}"
+    );
+}
+
+#[test]
+fn tui_degradation_drill_preserves_input_and_semantics_under_pressure() {
+    let dir = tempdir();
+    let mut app = build_test_app(dir.path().to_path_buf());
+    let mut trace = TuiDegradationDrillTrace::default();
+    app.enable_frame_timing_for_test();
+    app.reset_frame_timing_for_test();
+    app.set_terminal_size(120, 48);
+
+    seed_normal_tui_load(&mut app, &mut trace);
+    drive_provider_pressure(&mut app, &mut trace);
+    drive_tool_pressure(&mut app, &mut trace);
+    drive_session_write_bursts(&mut app, &mut trace);
+    drive_resize_pressure(&mut app, &mut trace);
+    finish_agent_and_preserve_input(&mut app, &mut trace);
+    assert_tui_degradation_evidence(&app, &mut trace);
 }
