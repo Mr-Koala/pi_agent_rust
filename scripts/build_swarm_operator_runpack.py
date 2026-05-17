@@ -71,6 +71,12 @@ BUDGET_DRIFT_SCHEMA = "pi.swarm.budget_drift.v1"
 AUTOPILOT_HANDOFF_SCHEMA = "pi.swarm.autopilot_handoff.v1"
 AUTOPILOT_E2E_SCHEMA = "pi.swarm.autopilot_e2e.v1"
 AUTOPILOT_E2E_EVENT_SCHEMA = "pi.swarm.autopilot_e2e.event.v1"
+DEGRADED_COORDINATION_RUNPACK_E2E_SCHEMA = (
+    "pi.swarm.degraded_coordination_runpack_e2e.v1"
+)
+DEGRADED_COORDINATION_RUNPACK_E2E_EVENT_SCHEMA = (
+    "pi.swarm.degraded_coordination_runpack_e2e.event.v1"
+)
 AUTOPILOT_DECISION_GATE_SCHEMA = "pi.swarm.autopilot_decision_gate.v1"
 AUTOPILOT_DECISION_GATE_CONTRACT_SCHEMA = (
     "pi.swarm.autopilot_decision_gate_contract.v1"
@@ -330,6 +336,9 @@ AUTOPILOT_E2E_REQUIRED_SCENARIOS = (
     "stale_action_plan_evidence",
     "validation_failure_fail_closed",
     "malformed_source_fail_closed",
+)
+DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS = (
+    "degraded_coordination_runpack_handoff",
 )
 AUTOPILOT_DECISION_GATE_CHILD_BEADS = (
     "bd-h3uv0.1",
@@ -10993,6 +11002,511 @@ def write_autopilot_e2e_output(
     output_path.write_text(json_dumps(summary, pretty=True), encoding="utf-8")
 
 
+def append_degraded_coordination_e2e_event(
+    events_path: Path,
+    event: dict[str, Any],
+) -> None:
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    with events_path.open("a", encoding="utf-8") as handle:
+        handle.write(json_dumps(event) + "\n")
+
+
+def degraded_coordination_e2e_event(
+    *,
+    scenario_id: str,
+    phase: str,
+    event: str,
+    status: str,
+    generated_at: str,
+    correlation_id: str,
+    command_provenance: list[dict[str, Any]] | None = None,
+    evidence_paths: list[str] | None = None,
+    recommended_action: str | None = None,
+    verdict: str | None = None,
+    degraded_inputs: dict[str, Any] | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema": DEGRADED_COORDINATION_RUNPACK_E2E_EVENT_SCHEMA,
+        "generated_at": generated_at,
+        "correlation_id": correlation_id,
+        "scenario_id": scenario_id,
+        "phase": phase,
+        "event": event,
+        "status": status,
+        "command_provenance": command_provenance or [],
+        "evidence_paths": evidence_paths or [],
+        "recommended_action": recommended_action,
+        "verdict": verdict,
+        "degraded_inputs": degraded_inputs or {},
+        "details": details or {},
+    }
+
+
+def first_issue_id_from_br_payload(payload: Any, context: str) -> str:
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        issue_id = payload[0].get("id")
+    elif isinstance(payload, dict):
+        issue_id = payload.get("id")
+    else:
+        issue_id = None
+    if not isinstance(issue_id, str) or not issue_id:
+        raise RunpackError(f"could not parse Beads issue id from {context}")
+    return issue_id
+
+
+def build_real_degraded_coordination_beads_sources(
+    scenario_dir: Path,
+    *,
+    scenario_id: str,
+    timeout_seconds: int,
+) -> tuple[Any, Any, list[dict[str, Any]], dict[str, Any]]:
+    if shutil.which("br") is None:
+        raise RunpackError("degraded coordination E2E requires br on PATH")
+    commands: list[dict[str, Any]] = []
+    workspace = scenario_dir / "beads-workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_init",
+        ["br", "init", "--prefix", "e2e", "--json"],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    fresh_stdout = capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_create_fresh_in_progress",
+        [
+            "br",
+            "create",
+            "--title",
+            "Fresh in-progress degraded coordination fixture",
+            "--type",
+            "task",
+            "--priority",
+            "2",
+            "--status",
+            "in_progress",
+            "--assignee",
+            "FreshStone",
+            "--description",
+            "Fresh active work proves Beads soft-lock fallback ownership.",
+            "--json",
+        ],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    dependency_stdout = capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_create_deferred_dependency",
+        [
+            "br",
+            "create",
+            "--title",
+            "Deferred dependency for blocked degraded coordination fixture",
+            "--type",
+            "task",
+            "--priority",
+            "2",
+            "--status",
+            "deferred",
+            "--description",
+            "Deferred blocker keeps the open fixture out of br ready output.",
+            "--json",
+        ],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    blocked_stdout = capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_create_blocked_open",
+        [
+            "br",
+            "create",
+            "--title",
+            "Blocked open degraded coordination fixture",
+            "--type",
+            "task",
+            "--priority",
+            "2",
+            "--description",
+            "Open work blocked by deferred dependency.",
+            "--json",
+        ],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    fresh_id = first_issue_id_from_br_payload(
+        json_payload_from_stdout(fresh_stdout),
+        "fresh in-progress fixture",
+    )
+    dependency_id = first_issue_id_from_br_payload(
+        json_payload_from_stdout(dependency_stdout),
+        "deferred dependency fixture",
+    )
+    blocked_id = first_issue_id_from_br_payload(
+        json_payload_from_stdout(blocked_stdout),
+        "blocked open fixture",
+    )
+    capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_dep_blocked_open",
+        ["br", "dep", "add", blocked_id, dependency_id, "--json"],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    list_stdout = capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_list",
+        ["br", "list", "--json"],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    ready_stdout = capture_autopilot_e2e_command(
+        commands,
+        f"{scenario_id}:beads_ready",
+        ["br", "ready", "--json"],
+        cwd=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    beads_payload = json_payload_from_stdout(list_stdout)
+    ready_payload = json_payload_from_stdout(ready_stdout)
+    if beads_payload is None or ready_payload is None:
+        raise RunpackError("degraded coordination E2E could not parse br JSON output")
+    issues = parse_issue_list(beads_payload)
+    ready_issues = parse_issue_list(ready_payload)
+    issue_by_id = {str(issue.get("id")): issue for issue in issues}
+    assert issue_by_id[fresh_id]["status"] == "in_progress"
+    assert issue_by_id[fresh_id]["assignee"] == "FreshStone"
+    assert issue_by_id[blocked_id]["status"] == "open"
+    assert blocked_id not in {str(issue.get("id")) for issue in ready_issues}
+    return (
+        beads_payload,
+        ready_payload,
+        commands,
+        {
+            "fresh_in_progress_id": fresh_id,
+            "blocked_open_id": blocked_id,
+            "deferred_dependency_id": dependency_id,
+            "ready_count": len(ready_issues),
+            "workspace": str(workspace),
+        },
+    )
+
+
+def build_degraded_coordination_runpack_e2e_summary(
+    *,
+    output_dir: Path | None,
+    events_path: Path | None,
+    generated_at: str,
+    max_items: int,
+    stale_after_hours: int,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    workspace = (
+        output_dir.resolve()
+        if output_dir is not None
+        else Path(tempfile.mkdtemp(prefix="pi_swarm_degraded_runpack_e2e_")).resolve()
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    events_path = events_path or (workspace / "degraded-coordination-e2e-events.jsonl")
+    if events_path.exists():
+        raise RunpackError(
+            f"refusing to overwrite degraded coordination E2E events: {events_path}"
+        )
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    events_path.write_text("", encoding="utf-8")
+    correlation_id = (
+        f"degraded-coordination-e2e-{generated_at.replace(':', '').replace('+', 'Z')}"
+    )
+    scenario_id = "degraded_coordination_runpack_handoff"
+    scenario_dir = workspace / scenario_id
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    append_degraded_coordination_e2e_event(
+        events_path,
+        degraded_coordination_e2e_event(
+            scenario_id=scenario_id,
+            phase="setup",
+            event="scenario_start",
+            status="running",
+            generated_at=generated_at,
+            correlation_id=correlation_id,
+            evidence_paths=["beads", "agent_mail_status", "remote_validation_proof_ledger"],
+        ),
+    )
+    preflight = autopilot_e2e_preflight(generated_at)
+    beads_payload, ready_payload, bead_commands, bead_details = (
+        build_real_degraded_coordination_beads_sources(
+            scenario_dir,
+            scenario_id=scenario_id,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    mail_command = {
+        "id": "agent_mail_status",
+        "command": "am robot status --format json",
+        "cwd": str(scenario_dir),
+        "status": "failed",
+        "exit_code": 2,
+        "issue": AGENT_MAIL_SCHEMA_CORRUPT_DETAIL,
+        "stdout_path": None,
+        "stderr_snippet": AGENT_MAIL_SCHEMA_CORRUPT_DETAIL,
+        "redaction_summary": {"redacted_count": 0, "fields": []},
+    }
+    shadow_command = {
+        "id": "rch_workspace_shadow",
+        "command": "rch exec -- cargo check --all-targets",
+        "cwd": str(scenario_dir),
+        "status": "failed",
+        "exit_code": 101,
+        "issue": (
+            "error: failed to load manifest for workspace member "
+            "`/data/projects/crates/fwc` referenced by workspace at "
+            "`/data/projects/Cargo.toml`; caused by failed to read "
+            "`/data/toon_rust/Cargo.toml`"
+        ),
+        "stdout_path": None,
+        "stderr_snippet": (
+            "error: failed to load manifest for workspace member "
+            "`/data/projects/crates/fwc` referenced by workspace at "
+            "`/data/projects/Cargo.toml`; caused by failed to read "
+            "`/data/toon_rust/Cargo.toml`"
+        ),
+        "redaction_summary": {"redacted_count": 0, "fields": []},
+    }
+    commands = bead_commands + [mail_command, shadow_command]
+    paths = autopilot_e2e_source_paths(
+        scenario_dir,
+        generated_at=generated_at,
+        preflight=preflight,
+        cargo_payload=autopilot_e2e_cargo_payload(
+            decision="admit",
+            queue_action="proceed",
+            slot_pressure="available",
+            queue_depth=1,
+            active_builds=1,
+            queued_builds=0,
+            reason="degraded coordination runpack e2e fixture",
+        ),
+        beads_payload=beads_payload,
+        beads_ready_payload=ready_payload,
+        agent_mail_status_payload=load_shared_agent_mail_schema_corrupt_fixture(
+            generated_at=generated_at,
+        ),
+        agent_mail_reservations_payload=autopilot_e2e_agent_mail_reservations(
+            generated_at,
+        ),
+        git_payload=autopilot_e2e_clean_git_payload(generated_at),
+    )
+    args = autopilot_e2e_args(
+        paths=paths,
+        commands=commands,
+        scenario_dir=scenario_dir,
+        generated_at=generated_at,
+        max_items=max_items,
+        stale_after_hours=stale_after_hours,
+    )
+    args.active_bead_id = scenario_id
+    runpack = build_runpack(args)
+    proof_entries = {
+        entry["command"].get("capture_id"): entry
+        for entry in runpack["remote_validation_proof_ledger"]["entries"]
+        if entry["command"].get("capture_id")
+    }
+    shadow_entry = proof_entries.get("rch_workspace_shadow")
+    assert shadow_entry is not None, runpack["remote_validation_proof_ledger"]
+    assert shadow_entry["evidence_classification"]["status"] == "blocked"
+    assert "worker_workspace_shadow" in shadow_entry["evidence_classification"][
+        "degraded_reasons"
+    ]
+    assert any(
+        warning["warning_id"] == "worker_workspace_shadow"
+        for warning in shadow_entry["warnings"]
+    )
+    assert runpack["status"] == "degraded"
+    assert runpack["agent_mail_read_state"]["status"] == "degraded"
+    assert runpack["agent_mail_read_state"]["soft_lock"] == "beads"
+    assert runpack["agent_mail_read_state"]["semantic_readiness_status"] == "fail"
+    assert runpack["beads"]["active_ownership"][0]["assignee"] == "FreshStone"
+    assert runpack["beads"]["open_candidate_count"] == 1
+    assert runpack["remote_validation_proof_ledger"]["summary"]["blocked_entries"] >= 1
+    assert (
+        runpack["remote_validation_proof_ledger"]["summary"][
+            "clean_remote_proof_entries"
+        ]
+        == 0
+    )
+    temp_inventory = runpack["temp_artifact_inventory"]
+    assert temp_inventory["summary"]["emitted_deletion_command_count"] == 0
+    assert all(entry["cleanup_command"] is None for entry in temp_inventory["entries"])
+    operator_actions = runpack["operator_next_actions"]
+    assert any("Treat Agent Mail read state as unavailable" in action for action in operator_actions)
+    assert any("Use Beads active ownership" in action and "FreshStone" in action for action in operator_actions)
+    assert any("Inspect remote validation proof ledger" in action for action in operator_actions)
+    assert not any("Runpack sources are ready" in action for action in operator_actions)
+    recommended_action = "use_beads_soft_lock_and_surface_rch_workspace_shadow"
+    degraded_inputs = {
+        "agent_mail_semantic_readiness": runpack["agent_mail_read_state"][
+            "semantic_readiness_status"
+        ],
+        "agent_mail_soft_lock": runpack["agent_mail_read_state"]["soft_lock"],
+        "fresh_in_progress_bead": bead_details["fresh_in_progress_id"],
+        "blocked_open_bead": bead_details["blocked_open_id"],
+        "ready_count": bead_details["ready_count"],
+        "rch_workspace_shadow_blocked": True,
+    }
+    event = degraded_coordination_e2e_event(
+        scenario_id=scenario_id,
+        phase="assert",
+        event="scenario_result",
+        status="pass",
+        generated_at=generated_at,
+        correlation_id=correlation_id,
+        command_provenance=command_provenance({"commands": commands}, max_items),
+        evidence_paths=[
+            "agent_mail_read_state",
+            "beads.active_ownership",
+            "beads.open_candidates",
+            "remote_validation_proof_ledger.entries",
+            "operator_next_actions",
+            "temp_artifact_inventory.summary.emitted_deletion_command_count",
+        ],
+        recommended_action=recommended_action,
+        verdict="pass",
+        degraded_inputs=degraded_inputs,
+        details={
+            "runpack_status": runpack["status"],
+            "proof_summary": runpack["remote_validation_proof_ledger"]["summary"],
+            "operator_next_actions": operator_actions,
+            "artifact_dir": str(scenario_dir),
+        },
+    )
+    append_degraded_coordination_e2e_event(events_path, event)
+    summary = {
+        "schema": DEGRADED_COORDINATION_RUNPACK_E2E_SCHEMA,
+        "generated_at": generated_at,
+        "correlation_id": correlation_id,
+        "status": "pass",
+        "purpose": (
+            "no_mock_degraded_coordination_runpack_e2e_operator_evidence_not_release_claim"
+        ),
+        "scenario_count": 1,
+        "required_scenarios": list(DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS),
+        "scenarios": {
+            scenario_id: {
+                "scenario_id": scenario_id,
+                "status": "pass",
+                "verdict": "pass",
+                "recommended_action": recommended_action,
+                "degraded_inputs": degraded_inputs,
+                "runpack_status": runpack["status"],
+                "agent_mail_read_state": runpack["agent_mail_read_state"],
+                "beads": {
+                    "active_ownership": runpack["beads"]["active_ownership"],
+                    "open_candidates": runpack["beads"]["open_candidates"],
+                    "stale": runpack["beads"]["stale"],
+                },
+                "remote_validation_proof": {
+                    "summary": runpack["remote_validation_proof_ledger"]["summary"],
+                    "shadow_entry_status": shadow_entry["evidence_classification"][
+                        "status"
+                    ],
+                    "shadow_warnings": [
+                        warning["warning_id"] for warning in shadow_entry["warnings"]
+                    ],
+                },
+                "operator_next_actions": operator_actions,
+                "no_delete_evidence": {
+                    "emitted_deletion_command_count": temp_inventory["summary"][
+                        "emitted_deletion_command_count"
+                    ],
+                    "cleanup_commands_present": any(
+                        entry["cleanup_command"] for entry in temp_inventory["entries"]
+                    ),
+                },
+                "artifact_dir": str(scenario_dir),
+            }
+        },
+        "events_jsonl": str(events_path),
+        "workspace": str(workspace),
+        "guards": {
+            "uses_real_temp_beads": True,
+            "uses_runpack_builder": True,
+            "fixture_captures_degraded_rch_and_agent_mail": True,
+            "no_cleanup_or_deletion_commands": True,
+            "heavy_rust_validation_requires_rch": True,
+            "operator_evidence_not_release_claim": True,
+        },
+    }
+    assert_degraded_coordination_runpack_e2e_summary(summary)
+    return summary
+
+
+def assert_degraded_coordination_runpack_e2e_summary(summary: dict[str, Any]) -> None:
+    assert summary.get("schema") == DEGRADED_COORDINATION_RUNPACK_E2E_SCHEMA
+    assert summary.get("status") == "pass"
+    assert summary.get("purpose") == (
+        "no_mock_degraded_coordination_runpack_e2e_operator_evidence_not_release_claim"
+    )
+    scenarios = summary.get("scenarios")
+    assert isinstance(scenarios, dict)
+    missing = set(DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS) - set(scenarios)
+    assert not missing, f"degraded coordination E2E missing scenarios: {sorted(missing)}"
+    for scenario_id in DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS:
+        scenario = scenarios[scenario_id]
+        assert scenario["status"] == "pass", scenario
+        assert scenario["verdict"] == "pass"
+        assert scenario["recommended_action"]
+        assert scenario["degraded_inputs"]["agent_mail_semantic_readiness"] == "fail"
+        assert scenario["degraded_inputs"]["agent_mail_soft_lock"] == "beads"
+        assert scenario["degraded_inputs"]["ready_count"] == 0
+        assert scenario["degraded_inputs"]["rch_workspace_shadow_blocked"] is True
+        assert scenario["runpack_status"] == "degraded"
+        assert scenario["remote_validation_proof"]["shadow_entry_status"] == "blocked"
+        assert "worker_workspace_shadow" in scenario["remote_validation_proof"][
+            "shadow_warnings"
+        ]
+        assert scenario["no_delete_evidence"]["emitted_deletion_command_count"] == 0
+        assert scenario["no_delete_evidence"]["cleanup_commands_present"] is False
+    guards = summary.get("guards")
+    assert isinstance(guards, dict)
+    assert guards.get("uses_real_temp_beads") is True
+    assert guards.get("uses_runpack_builder") is True
+    assert guards.get("no_cleanup_or_deletion_commands") is True
+    events_path = Path(str(summary.get("events_jsonl")))
+    assert events_path.exists(), f"missing degraded coordination E2E events: {events_path}"
+    events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    result_events = [event for event in events if event.get("event") == "scenario_result"]
+    assert len(result_events) == len(DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS)
+    for event in result_events:
+        assert event.get("schema") == DEGRADED_COORDINATION_RUNPACK_E2E_EVENT_SCHEMA
+        assert event.get("scenario_id") in DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS
+        assert event.get("status") == "pass"
+        assert event.get("verdict") == "pass"
+        assert event.get("recommended_action")
+        assert isinstance(event.get("degraded_inputs"), dict)
+        assert_no_dangerous_runnable_commands(event.get("command_provenance") or [])
+
+
+def write_degraded_coordination_runpack_e2e_output(
+    args: argparse.Namespace,
+    summary: dict[str, Any],
+) -> None:
+    output_path = getattr(args, "out_degraded_coordination_e2e_json", None)
+    if output_path is None:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        raise RunpackError(
+            f"refusing to overwrite degraded coordination E2E summary: {output_path}"
+        )
+    output_path.write_text(json_dumps(summary, pretty=True), encoding="utf-8")
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -16381,6 +16895,38 @@ def run_self_test() -> int:
         assert autopilot_e2e["scenarios"]["malformed_source_fail_closed"][
             "selected_action"
         ] == "fail_closed"
+        degraded_coordination_e2e = build_degraded_coordination_runpack_e2e_summary(
+            output_dir=workspace / "degraded-coordination-e2e",
+            events_path=workspace / "degraded-coordination-e2e" / "events.jsonl",
+            generated_at=generated_at,
+            max_items=args.max_items,
+            stale_after_hours=args.stale_after_hours,
+            timeout_seconds=DEFAULT_CAPTURE_TIMEOUT_SECONDS,
+        )
+        assert degraded_coordination_e2e["schema"] == (
+            DEGRADED_COORDINATION_RUNPACK_E2E_SCHEMA
+        )
+        assert degraded_coordination_e2e["status"] == "pass"
+        assert set(degraded_coordination_e2e["scenarios"]) == set(
+            DEGRADED_COORDINATION_RUNPACK_E2E_REQUIRED_SCENARIOS
+        )
+        degraded_coordination_scenario = degraded_coordination_e2e["scenarios"][
+            "degraded_coordination_runpack_handoff"
+        ]
+        assert degraded_coordination_scenario["runpack_status"] == "degraded"
+        assert degraded_coordination_scenario["recommended_action"] == (
+            "use_beads_soft_lock_and_surface_rch_workspace_shadow"
+        )
+        assert degraded_coordination_scenario["degraded_inputs"][
+            "agent_mail_soft_lock"
+        ] == "beads"
+        assert degraded_coordination_scenario["degraded_inputs"]["ready_count"] == 0
+        assert degraded_coordination_scenario["remote_validation_proof"][
+            "shadow_entry_status"
+        ] == "blocked"
+        assert degraded_coordination_scenario["no_delete_evidence"][
+            "emitted_deletion_command_count"
+        ] == 0
         final_gate_issues = [
             {
                 "id": "bd-h3uv0",
@@ -17190,6 +17736,32 @@ def parse_args() -> argparse.Namespace:
         help="print the no-mock autopilot E2E summary JSON",
     )
     parser.add_argument(
+        "--run-degraded-coordination-e2e",
+        action="store_true",
+        help="run no-mock degraded coordination runpack E2E scenario with JSONL evidence",
+    )
+    parser.add_argument(
+        "--out-degraded-coordination-e2e-json",
+        type=Path,
+        help=(
+            "write pi.swarm.degraded_coordination_runpack_e2e.v1 summary JSON; "
+            "refuses to overwrite"
+        ),
+    )
+    parser.add_argument(
+        "--out-degraded-coordination-e2e-events-jsonl",
+        type=Path,
+        help=(
+            "write pi.swarm.degraded_coordination_runpack_e2e.event.v1 JSONL; "
+            "refuses to overwrite"
+        ),
+    )
+    parser.add_argument(
+        "--print-degraded-coordination-e2e",
+        action="store_true",
+        help="print the no-mock degraded coordination runpack E2E summary JSON",
+    )
+    parser.add_argument(
         "--run-autopilot-final-gate",
         action="store_true",
         help="build the final prompt-to-artifact autopilot decision gate",
@@ -17297,6 +17869,11 @@ def main() -> int:
     if args.capture_timeout_seconds <= 0:
         print("ERROR: --capture-timeout-seconds must be positive", file=sys.stderr)
         return 2
+    degraded_coordination_e2e_options_used = (
+        args.out_degraded_coordination_e2e_json
+        or args.out_degraded_coordination_e2e_events_jsonl
+        or args.print_degraded_coordination_e2e
+    )
     autopilot_final_gate_options_used = (
         args.out_autopilot_final_gate_json
         or args.print_autopilot_final_gate
@@ -17353,6 +17930,13 @@ def main() -> int:
         or args.run_fourth_wave_final_gate
     ):
         print("ERROR: --quality-gate-result requires a final-gate run mode", file=sys.stderr)
+        return 2
+    if degraded_coordination_e2e_options_used and not args.run_degraded_coordination_e2e:
+        print(
+            "ERROR: degraded coordination E2E options require "
+            "--run-degraded-coordination-e2e",
+            file=sys.stderr,
+        )
         return 2
     try:
         if args.run_fourth_wave_final_gate:
@@ -17414,6 +17998,22 @@ def main() -> int:
             )
             write_autopilot_e2e_output(args, summary)
             if args.print_autopilot_e2e or args.out_autopilot_e2e_json is None:
+                print(json_dumps(summary, pretty=True))
+            return 0
+        if args.run_degraded_coordination_e2e:
+            summary = build_degraded_coordination_runpack_e2e_summary(
+                output_dir=args.capture_dir,
+                events_path=args.out_degraded_coordination_e2e_events_jsonl,
+                generated_at=args.generated_at or utc_now_iso(),
+                max_items=args.max_items,
+                stale_after_hours=args.stale_after_hours,
+                timeout_seconds=args.capture_timeout_seconds,
+            )
+            write_degraded_coordination_runpack_e2e_output(args, summary)
+            if (
+                args.print_degraded_coordination_e2e
+                or args.out_degraded_coordination_e2e_json is None
+            ):
                 print(json_dumps(summary, pretty=True))
             return 0
         capture_current_sources(args)

@@ -1949,6 +1949,13 @@ The autopilot never mutates ownership or replaces Doctor, Beads, Agent Mail,
 RCH, git, or the source artifacts; it only turns those inputs into reproducible
 operator next-action guidance.
 
+For degraded-coordination handoff proof, the runpack script also has a no-mock
+E2E mode (`--run-degraded-coordination-e2e`) that feeds real temporary Beads
+state plus fixture-captured Agent Mail and RCH failures through the runpack
+builder. The emitted evidence stays operator-only: it proves Beads soft-lock
+fallback, degraded validation, and no cleanup/deletion-command output without
+supporting release-facing speed or drop-in claims.
+
 Fourth-wave swarm self-healing guidance layers a read-only stale-evidence
 renewal queue, dry-run action plan, work admission gate, budget lease
 simulation, turn pressure ledger, extension quarantine rehearsal, and redacted

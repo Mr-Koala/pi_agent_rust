@@ -1050,6 +1050,25 @@ Autopilot no-mock E2E evidence:
 }
 ```
 
+Degraded-coordination runpack no-mock E2E evidence:
+
+```bash
+e2e_dir="/data/tmp/pi_swarm_degraded_coordination_e2e/${AGENT_NAME:-agent}-$(date -u +%Y%m%dT%H%M%SZ)"
+python3 scripts/build_swarm_operator_runpack.py \
+  --run-degraded-coordination-e2e \
+  --capture-dir "$e2e_dir" \
+  --out-degraded-coordination-e2e-json "$e2e_dir/summary.json" \
+  --out-degraded-coordination-e2e-events-jsonl "$e2e_dir/events.jsonl"
+```
+
+The summary emits `pi.swarm.degraded_coordination_runpack_e2e.v1` and JSONL
+events with `pi.swarm.degraded_coordination_runpack_e2e.event.v1`. The scenario
+uses a real temporary Beads workspace for one fresh in-progress bead and one
+blocked open bead, fixture-captured Agent Mail semantic-readiness failure, and
+an RCH worker workspace-shadow blocker. A passing verdict means the runpack
+recommends Beads soft-lock ownership, keeps validation degraded instead of
+green, and emits no cleanup or deletion commands for temp artifacts.
+
 Autopilot final decision-gate evidence:
 
 ```json
