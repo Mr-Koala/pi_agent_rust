@@ -184,6 +184,26 @@ Golden examples live in
 clean remote pass, local-fallback refusal, queue backoff, and artifact retrieval
 warning.
 
+## Temp Artifact Inventory
+
+Swarm runpacks include `temp_artifact_inventory` with schema
+`pi.swarm.temp_artifact_inventory.v1`. This is a read-only inventory of scratch
+and evidence paths observed through cargo admission, RCH proof entries, smoke
+harness artifacts, validation output captures, and capture-manifest temp
+artifacts.
+
+The inventory never executes cleanup and does not emit deletion commands. Every
+entry records a deletion policy:
+
+- `retain_active`: owned or active paths that must be preserved.
+- `requires_explicit_operator_approval`: known-owner stale candidates that still
+  require written approval before deletion.
+- `deletion_protected_unknown_owner`: unknown-owner paths, always protected.
+
+Operators may use the emitted review commands such as `stat` and `du -sh` to
+inspect pressure, but deleting files or directories still requires explicit
+written permission outside the runpack.
+
 ## Monitor An Active Swarm
 
 Use this status loop while work is in progress:

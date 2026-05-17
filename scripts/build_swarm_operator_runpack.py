@@ -37,6 +37,7 @@ TAIL_LATENCY_SCHEMA = "pi.operator_tail_latency.v1"
 BOTTLENECK_ATTRIBUTION_SCHEMA = "pi.swarm.bottleneck_attribution_dashboard.v1"
 TURN_PRESSURE_LEDGER_SCHEMA = "pi.swarm.turn_pressure_ledger.v1"
 TURN_PRESSURE_LEDGER_CONTRACT_SCHEMA = "pi.swarm.turn_pressure_ledger_contract.v1"
+TEMP_ARTIFACT_INVENTORY_SCHEMA = "pi.swarm.temp_artifact_inventory.v1"
 STALE_EVIDENCE_RENEWAL_QUEUE_SCHEMA = "pi.swarm.stale_evidence_renewal_queue.v1"
 FLIGHT_RECORDER_REPORT_SCHEMA = "pi.swarm.flight_recorder.report.v1"
 HOST_PREFLIGHT_SCHEMA = "pi.doctor.swarm_resource_preflight.v1"
@@ -4923,6 +4924,301 @@ def build_remote_validation_proof_ledger(
     }
 
 
+def temp_artifact_text(value: Any) -> str:
+    return value if isinstance(value, str) and value else ""
+
+
+def is_temp_artifact_path(path: str) -> bool:
+    lowered = path.lower()
+    return (
+        lowered.startswith("/data/tmp/")
+        or lowered.startswith("/tmp/")
+        or "/.rch-target" in lowered
+        or "/.rch-tmp" in lowered
+        or "clean-worktree" in lowered
+        or "clean_worktree" in lowered
+        or "git_scan" in lowered
+    )
+
+
+def temp_artifact_kind_from_path(path: str, fallback: str) -> str:
+    lowered = path.lower()
+    if "cargo" in lowered and "target" in lowered:
+        return "cargo_target_dir"
+    if "tmp" in lowered and "cargo" in lowered:
+        return "cargo_tmpdir"
+    if ".rch-target" in lowered:
+        return "rch_remote_target_dir"
+    if ".rch-tmp" in lowered:
+        return "rch_remote_tmpdir"
+    if "clean-worktree" in lowered or "clean_worktree" in lowered:
+        return "clean_worktree_validation_dir"
+    if "git_scan" in lowered or "ubs" in lowered:
+        return "ubs_shadow_workspace"
+    return fallback
+
+
+def temp_artifact_state(item: dict[str, Any]) -> str:
+    state = temp_artifact_text(item.get("state") or item.get("activity"))
+    if state in {"active", "retained", "stale_candidate", "unknown_owner"}:
+        return state
+    if item.get("owner") or item.get("bead_id"):
+        return "active"
+    return "unknown_owner"
+
+
+def temp_artifact_deletion_policy(entry: dict[str, Any]) -> str:
+    if entry["state"] in {"active", "retained"}:
+        return "retain_active"
+    if not entry.get("owner") and not entry.get("bead_id"):
+        return "deletion_protected_unknown_owner"
+    return "requires_explicit_operator_approval"
+
+
+def temp_artifact_review_commands(path: str) -> list[str]:
+    quoted = shlex.quote(path)
+    return [
+        f"test -e {quoted} && stat {quoted}",
+        f"du -sh {quoted}",
+    ]
+
+
+def add_temp_artifact_entry(
+    entries: list[dict[str, Any]],
+    *,
+    path: Any,
+    source: str,
+    kind: str,
+    evidence_path: str,
+    owner: Any = None,
+    bead_id: Any = None,
+    reason: Any = None,
+    state: Any = None,
+    last_observed_at: Any = None,
+) -> None:
+    path_text = temp_artifact_text(path)
+    if not path_text:
+        return
+    entry = {
+        "id": f"temp-{hashlib.sha256(f'{source}:{evidence_path}:{kind}'.encode('utf-8')).hexdigest()[:12]}",
+        "path": path_text,
+        "kind": temp_artifact_kind_from_path(path_text, kind),
+        "source": source,
+        "evidence_paths": [evidence_path],
+        "owner": owner if isinstance(owner, str) and owner else None,
+        "bead_id": bead_id if isinstance(bead_id, str) and bead_id else None,
+        "reason": reason if isinstance(reason, str) and reason else None,
+        "state": state if isinstance(state, str) and state else None,
+        "last_observed_at": last_observed_at
+        if isinstance(last_observed_at, str) and last_observed_at
+        else None,
+        "review_commands": temp_artifact_review_commands(path_text),
+        "cleanup_command": None,
+        "permission_boundary": (
+            "No deletion command emitted. Explicit written operator approval is "
+            "required before deleting any file or directory."
+        ),
+    }
+    entry["state"] = temp_artifact_state(entry)
+    entry["deletion_policy"] = temp_artifact_deletion_policy(entry)
+    entries.append(entry)
+
+
+def build_temp_artifact_inventory(
+    runpack: dict[str, Any],
+    *,
+    capture_summary: dict[str, Any],
+    generated_at: datetime,
+    max_items: int,
+) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    cargo = runpack.get("rch_admission") if isinstance(runpack.get("rch_admission"), dict) else {}
+    add_temp_artifact_entry(
+        entries,
+        path=cargo.get("cargo_target_dir"),
+        source="cargo_admission",
+        kind="cargo_target_dir",
+        evidence_path="rch_admission.cargo_target_dir",
+        reason="cargo_headroom selected target directory",
+        state="active",
+        last_observed_at=generated_at.isoformat(),
+    )
+    add_temp_artifact_entry(
+        entries,
+        path=cargo.get("tmpdir"),
+        source="cargo_admission",
+        kind="cargo_tmpdir",
+        evidence_path="rch_admission.tmpdir",
+        reason="cargo_headroom selected TMPDIR",
+        state="active",
+        last_observed_at=generated_at.isoformat(),
+    )
+
+    proof_ledger = (
+        runpack.get("remote_validation_proof_ledger")
+        if isinstance(runpack.get("remote_validation_proof_ledger"), dict)
+        else {}
+    )
+    for index, entry in enumerate(proof_ledger.get("entries") or []):
+        if not isinstance(entry, dict):
+            continue
+        paths = entry.get("paths") if isinstance(entry.get("paths"), dict) else {}
+        bead_id = entry.get("bead_id")
+        add_temp_artifact_entry(
+            entries,
+            path=paths.get("remote_target_dir"),
+            source="remote_validation_proof_ledger",
+            kind="rch_remote_target_dir",
+            evidence_path=f"remote_validation_proof_ledger.entries[{index}].paths.remote_target_dir",
+            bead_id=bead_id,
+            reason="RCH remote validation target directory",
+            state="active",
+            last_observed_at=proof_ledger.get("generated_at_utc"),
+        )
+        add_temp_artifact_entry(
+            entries,
+            path=paths.get("remote_tmpdir"),
+            source="remote_validation_proof_ledger",
+            kind="rch_remote_tmpdir",
+            evidence_path=f"remote_validation_proof_ledger.entries[{index}].paths.remote_tmpdir",
+            bead_id=bead_id,
+            reason="RCH remote validation temp directory",
+            state="active",
+            last_observed_at=proof_ledger.get("generated_at_utc"),
+        )
+
+    smoke = runpack.get("smoke_harness") if isinstance(runpack.get("smoke_harness"), dict) else {}
+    for index, artifact in enumerate(smoke.get("artifact_manifest") or []):
+        if not isinstance(artifact, dict):
+            continue
+        add_temp_artifact_entry(
+            entries,
+            path=artifact.get("path"),
+            source="smoke_harness",
+            kind="e2e_artifact",
+            evidence_path=f"smoke_harness.artifact_manifest[{index}].path",
+            reason=temp_artifact_text(artifact.get("id")) or "smoke harness artifact",
+            state="retained",
+            last_observed_at=generated_at.isoformat(),
+        )
+
+    validation = (
+        runpack.get("validation_outputs")
+        if isinstance(runpack.get("validation_outputs"), dict)
+        else {}
+    )
+    for index, output in enumerate(validation.get("outputs") or []):
+        if not isinstance(output, dict):
+            continue
+        add_temp_artifact_entry(
+            entries,
+            path=output.get("path"),
+            source="validation_outputs",
+            kind="validation_output",
+            evidence_path=f"validation_outputs.outputs[{index}].path",
+            reason="validation output artifact",
+            state="retained",
+            last_observed_at=generated_at.isoformat(),
+        )
+
+    for index, command in enumerate(capture_summary.get("commands") or []):
+        if not isinstance(command, dict):
+            continue
+        command_text = temp_artifact_text(command.get("command"))
+        command_kind = (
+            "ubs_shadow_workspace"
+            if "ubs" in command_text or command.get("id") == "ubs_staged"
+            else "clean_worktree_validation_dir"
+            if "clean-worktree" in command_text or "clean_worktree" in command_text
+            else "command_output"
+        )
+        for key in ("stdout_path", "stderr_path", "artifact_path"):
+            add_temp_artifact_entry(
+                entries,
+                path=command.get(key),
+                source="capture_manifest.commands",
+                kind=command_kind,
+                evidence_path=f"capture.commands[{index}].{key}",
+                owner=command.get("owner"),
+                bead_id=command.get("bead_id"),
+                reason=command_text or temp_artifact_text(command.get("id")),
+                state="retained",
+                last_observed_at=command.get("ended_at") or command.get("started_at"),
+            )
+
+    for index, item in enumerate(capture_summary.get("temp_artifacts") or []):
+        if not isinstance(item, dict):
+            continue
+        add_temp_artifact_entry(
+            entries,
+            path=item.get("path"),
+            source="capture_manifest.temp_artifacts",
+            kind=temp_artifact_text(item.get("kind")) or "temp_artifact",
+            evidence_path=f"capture.temp_artifacts[{index}].path",
+            owner=item.get("owner"),
+            bead_id=item.get("bead_id"),
+            reason=item.get("reason"),
+            state=item.get("state"),
+            last_observed_at=item.get("last_observed_at"),
+        )
+
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in entries:
+        if not is_temp_artifact_path(entry["path"]):
+            continue
+        key = (entry["path"], entry["kind"])
+        if key in deduped:
+            deduped[key]["evidence_paths"].extend(entry["evidence_paths"])
+            deduped[key]["evidence_paths"] = unique_strings(deduped[key]["evidence_paths"])
+            for field in ("owner", "bead_id", "reason", "last_observed_at"):
+                if not deduped[key].get(field) and entry.get(field):
+                    deduped[key][field] = entry[field]
+            continue
+        deduped[key] = entry
+    inventory_entries = list(deduped.values())
+    deletion_protected_count = sum(
+        1
+        for entry in inventory_entries
+        if entry.get("deletion_policy") == "deletion_protected_unknown_owner"
+    )
+    cleanup_candidate_count = sum(
+        1 for entry in inventory_entries if entry.get("state") == "stale_candidate"
+    )
+    active_count = sum(
+        1 for entry in inventory_entries if entry.get("state") in {"active", "retained"}
+    )
+    return {
+        "schema": TEMP_ARTIFACT_INVENTORY_SCHEMA,
+        "generated_at": generated_at.isoformat(),
+        "status": "review_required"
+        if deletion_protected_count or cleanup_candidate_count
+        else "tracked",
+        "purpose": "read_only_temp_artifact_inventory_not_cleanup_executor",
+        "known_temp_roots": [
+            "/data/tmp/pi_agent_rust_cargo",
+            "/data/tmp",
+            "/tmp",
+            ".rch-target*",
+            ".rch-tmp*",
+        ],
+        "entries": inventory_entries,
+        "summary": {
+            "entry_count": len(inventory_entries),
+            "active_or_retained_count": active_count,
+            "cleanup_candidate_count": cleanup_candidate_count,
+            "deletion_protected_count": deletion_protected_count,
+            "emitted_deletion_command_count": 0,
+        },
+        "guards": {
+            "read_only": True,
+            "no_filesystem_deletion": True,
+            "no_destructive_commands_emitted": True,
+            "explicit_operator_permission_required": True,
+            "unknown_owner_deletion_protected": True,
+        },
+    }
+
+
 def numeric_value(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -8002,6 +8298,12 @@ def build_runpack(args: argparse.Namespace) -> dict[str, Any]:
                 args.max_items,
             )
         )
+    runpack["temp_artifact_inventory"] = build_temp_artifact_inventory(
+        runpack,
+        capture_summary=capture_summary,
+        generated_at=generated_at,
+        max_items=args.max_items,
+    )
     runpack["turn_pressure_ledger"] = build_turn_pressure_ledger(
         runpack,
         by_id,
@@ -8067,6 +8369,17 @@ def operator_next_actions(runpack: dict[str, Any]) -> list[str]:
         actions.append("Use activity-digest saturation evidence to narrow or redirect the swarm")
     if runpack["git_state"].get("dirty"):
         actions.append("Account for dirty files before using the runpack as handoff evidence")
+    temp_inventory = runpack.get("temp_artifact_inventory")
+    if isinstance(temp_inventory, dict):
+        summary = (
+            temp_inventory.get("summary")
+            if isinstance(temp_inventory.get("summary"), dict)
+            else {}
+        )
+        if summary.get("cleanup_candidate_count") or summary.get("deletion_protected_count"):
+            actions.append(
+                "Review temp artifact inventory; do not delete unknown-owner or candidate paths without explicit written approval"
+            )
     mail_state = runpack.get("agent_mail_read_state", {})
     if mail_state.get("status") in {"degraded", "not_available"}:
         actions.append("Treat Agent Mail read state as unavailable and fall back to Beads ownership evidence")
@@ -8214,6 +8527,20 @@ def render_markdown(runpack: dict[str, Any]) -> str:
     )
     lines.append(f"- Evidence readiness: `{runpack['evidence_readiness'].get('overall_status')}`")
     lines.append(f"- Git dirty: `{runpack['git_state'].get('dirty')}`")
+    temp_inventory = runpack.get("temp_artifact_inventory")
+    if isinstance(temp_inventory, dict):
+        summary = (
+            temp_inventory.get("summary")
+            if isinstance(temp_inventory.get("summary"), dict)
+            else {}
+        )
+        lines.append(
+            "- Temp artifact inventory: "
+            f"`{temp_inventory.get('status')}` "
+            f"(entries `{summary.get('entry_count')}`, "
+            f"protected `{summary.get('deletion_protected_count')}`, "
+            f"delete commands `{summary.get('emitted_deletion_command_count')}`)"
+        )
     lines.append(f"- Agent Mail read state: `{runpack['agent_mail_read_state'].get('status')}`")
     mail_state = runpack.get("agent_mail_read_state", {})
     fallback_ownership = (
@@ -8374,6 +8701,16 @@ def render_markdown(runpack: dict[str, Any]) -> str:
             lines.append(
                 f"- `{dimension.get('id')}`: `{dimension.get('status')}` "
                 f"({dimension.get('signal')})"
+            )
+    if isinstance(runpack.get("temp_artifact_inventory"), dict):
+        inventory = runpack["temp_artifact_inventory"]
+        lines.extend(["", "## Temp Artifact Inventory"])
+        lines.append(f"- Schema: `{inventory.get('schema')}`")
+        lines.append(f"- Status: `{inventory.get('status')}`")
+        for entry in inventory.get("entries", []):
+            lines.append(
+                f"- `{entry.get('kind')}`: `{entry.get('deletion_policy')}` "
+                f"({entry.get('path')})"
             )
     handoff = runpack.get("autopilot_handoff")
     if isinstance(handoff, dict):
@@ -14057,6 +14394,46 @@ def run_self_test() -> int:
                     "issue": None,
                 },
             ],
+            "temp_artifacts": [
+                {
+                    "id": "active_target",
+                    "path": "/data/tmp/pi_agent_rust_cargo/test/target",
+                    "kind": "cargo_target_dir",
+                    "owner": "Codex",
+                    "bead_id": "bd-fixture",
+                    "reason": "active cargo_headroom target dir",
+                    "state": "active",
+                    "last_observed_at": generated_at,
+                },
+                {
+                    "id": "clean_worktree_validation",
+                    "path": str(workspace / "clean-worktree-validation"),
+                    "kind": "clean_worktree_validation_dir",
+                    "owner": "Codex",
+                    "bead_id": "bd-fixture",
+                    "reason": "clean-worktree validation fixture retained for audit",
+                    "state": "retained",
+                    "last_observed_at": generated_at,
+                },
+                {
+                    "id": "ubs_shadow_workspace",
+                    "path": "/data/tmp/tmp.ubs/git_scan",
+                    "kind": "ubs_shadow_workspace",
+                    "owner": "Codex",
+                    "bead_id": "bd-fixture",
+                    "reason": "UBS staged shadow workspace fixture",
+                    "state": "retained",
+                    "last_observed_at": generated_at,
+                },
+                {
+                    "id": "stale_unknown_target",
+                    "path": "/data/tmp/pi_agent_rust_cargo/unknown/stale-target",
+                    "kind": "cargo_target_dir",
+                    "reason": "stale unknown-owner fixture",
+                    "state": "stale_candidate",
+                    "last_observed_at": "2026-05-01T00:00:00+00:00",
+                },
+            ],
         },
         capture_dir=workspace / "capture",
         out_json=workspace / "runpack.json",
@@ -14097,6 +14474,36 @@ def run_self_test() -> int:
         assert runpack["git_state"]["dirty"] is True
         assert runpack["git_state"]["branch"] == "main"
         assert runpack["git_state"]["upstream"]["ahead"] == 1
+        temp_inventory = runpack["temp_artifact_inventory"]
+        assert temp_inventory["schema"] == TEMP_ARTIFACT_INVENTORY_SCHEMA
+        assert temp_inventory["guards"]["read_only"] is True
+        assert temp_inventory["guards"]["no_filesystem_deletion"] is True
+        assert temp_inventory["guards"]["no_destructive_commands_emitted"] is True
+        assert temp_inventory["guards"]["explicit_operator_permission_required"] is True
+        assert temp_inventory["summary"]["entry_count"] >= 4
+        assert temp_inventory["summary"]["emitted_deletion_command_count"] == 0
+        artifact_by_path = {entry["path"]: entry for entry in temp_inventory["entries"]}
+        assert artifact_by_path["/data/tmp/pi_agent_rust_cargo/test/target"][
+            "deletion_policy"
+        ] == "retain_active"
+        assert artifact_by_path["/data/tmp/pi_agent_rust_cargo/test/target"][
+            "owner"
+        ] == "Codex"
+        assert artifact_by_path["/data/tmp/pi_agent_rust_cargo/test/target"][
+            "bead_id"
+        ] == "bd-fixture"
+        assert artifact_by_path[str(workspace / "clean-worktree-validation")][
+            "kind"
+        ] == "clean_worktree_validation_dir"
+        assert artifact_by_path["/data/tmp/tmp.ubs/git_scan"][
+            "kind"
+        ] == "ubs_shadow_workspace"
+        stale_unknown = artifact_by_path[
+            "/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+        ]
+        assert stale_unknown["state"] == "stale_candidate"
+        assert stale_unknown["deletion_policy"] == "deletion_protected_unknown_owner"
+        assert all(entry["cleanup_command"] is None for entry in temp_inventory["entries"])
         assert runpack["agent_mail_read_state"]["status"] == "degraded"
         assert runpack["agent_mail_read_state"]["transport_status"] == "reachable"
         assert runpack["agent_mail_read_state"]["semantic_readiness_status"] == "fail"
@@ -14120,6 +14527,7 @@ def run_self_test() -> int:
         operator_actions = runpack["operator_next_actions"]
         assert any("Treat Agent Mail read state as unavailable" in action for action in operator_actions)
         assert any("Use Beads active ownership" in action and "GreenStone" in action for action in operator_actions)
+        assert any("Review temp artifact inventory" in action for action in operator_actions)
         assert any("do not require Agent Mail reservations before coding" in action for action in operator_actions)
         assert any("br close" in action and "br sync --flush-only" in action for action in operator_actions)
         assert not any(
