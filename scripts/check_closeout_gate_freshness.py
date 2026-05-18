@@ -39,7 +39,7 @@ AUDIT_SCHEMA = "pi.closeout_gate_freshness_audit.v1"
 CONTRACT_GLOB = "docs/contracts/*closeout-gate-contract.json"
 EVIDENCE_GLOB = "docs/evidence/*closeout-gate*.json"
 REGISTRY_SCHEMA = "pi.closeout_evidence_registry.v1"
-REGISTRY_PATH = Path("docs/evidence/closeout-evidence-registry.json")
+REGISTRY_PATH = Path("docs/contracts/closeout-evidence-registry.json")
 README_CLOSEOUT_ARTIFACT_RE = re.compile(
     r"docs/evidence/[A-Za-z0-9._/-]*closeout-gate[A-Za-z0-9._/-]*\.json"
 )
@@ -690,28 +690,31 @@ def validate_registry_entry(
     repo_root: Path,
     entry: Any,
     index: int,
+    section: str,
     artifact_by_path: dict[str, ArtifactReport],
+    markdown_refs_by_artifact: dict[str, set[str]],
     seen_paths: set[str],
+    require_markdown_reference: bool,
 ) -> tuple[str | None, list[Finding]]:
     findings: list[Finding] = []
-    pointer = f"{REGISTRY_PATH.as_posix()}:current_artifacts[{index}]"
+    pointer = f"{REGISTRY_PATH.as_posix()}:{section}[{index}]"
     if not isinstance(entry, dict):
         findings.append(Finding(
             "fail",
             "registry_entry_shape",
             f"registry entry {index} is not an object",
-            "Replace the registry entry with an object containing path, contract_path, decision_gate_schema, source_bead_or_epic, reference_paths, and advisory_claim_boundary.",
+            "Replace the registry entry with an object containing artifact_path, contract_path, decision_gate_schema, source_bead_or_epic, reference_paths, and advisory_claim_boundary.",
             path=pointer,
         ))
         return None, findings
 
-    artifact_path = entry.get("path")
+    artifact_path = entry.get("artifact_path")
     if not isinstance(artifact_path, str) or not artifact_path:
         findings.append(Finding(
             "fail",
             "registry_entry_path",
             f"registry entry {index} has no artifact path",
-            "Set current_artifacts[].path to a repository-relative closeout evidence artifact.",
+            f"Set {section}[].artifact_path to a repository-relative closeout evidence artifact.",
             path=pointer,
         ))
         return None, findings
@@ -797,9 +800,37 @@ def validate_registry_entry(
             "fail",
             "registry_reference_paths",
             f"registry entry for {artifact_path} has invalid reference_paths",
-            "Set reference_paths to a list of README/runbook/docs paths that intentionally cite this artifact, or an empty list when it is registry-only.",
+            "Set reference_paths to a list of README/runbook/docs paths that intentionally cite this artifact.",
             path=pointer,
         ))
+        references = []
+    elif require_markdown_reference and not references:
+        findings.append(Finding(
+            "fail",
+            "registry_reference_paths",
+            f"current registry entry for {artifact_path} has no reference_paths",
+            "Add a README/runbook/docs reference and record that Markdown file in reference_paths.",
+            path=pointer,
+        ))
+    else:
+        known_reference_paths = markdown_refs_by_artifact.get(artifact_path, set())
+        for reference_path in references:
+            if not (repo_root / reference_path).exists():
+                findings.append(Finding(
+                    "fail",
+                    "registry_reference_missing_file",
+                    f"registry reference path is missing: {reference_path}",
+                    "Update reference_paths to checked-in Markdown files that cite this artifact.",
+                    path=pointer,
+                ))
+            elif reference_path not in known_reference_paths:
+                findings.append(Finding(
+                    "fail",
+                    "registry_reference_drift",
+                    f"{reference_path} no longer cites {artifact_path}",
+                    "Update the Markdown reference or remove the stale path from the registry entry.",
+                    path=pointer,
+                ))
 
     claim_boundary = entry.get("advisory_claim_boundary")
     if not isinstance(claim_boundary, str) or not claim_boundary.strip():
@@ -821,6 +852,11 @@ def audit_closeout_registry(
     registry_file = repo_root / REGISTRY_PATH
     artifact_by_path = {report.path: report for report in artifact_reports}
     markdown_refs = collect_markdown_closeout_refs(repo_root)
+    markdown_refs_by_artifact: dict[str, set[str]] = {}
+    for ref in markdown_refs:
+        artifact_path = ref["artifact_path"]
+        source_path = ref["source_path"]
+        markdown_refs_by_artifact.setdefault(artifact_path, set()).add(source_path)
     findings: list[Finding] = []
     payload: dict[str, Any] | None = None
 
@@ -831,7 +867,7 @@ def audit_closeout_registry(
             "fail",
             "registry_parse",
             f"failed to load closeout evidence registry: {exc}",
-            "Create or repair docs/evidence/closeout-evidence-registry.json with schema pi.closeout_evidence_registry.v1.",
+            "Create or repair docs/contracts/closeout-evidence-registry.json with schema pi.closeout_evidence_registry.v1.",
             path=REGISTRY_PATH.as_posix(),
         ))
         return {
@@ -851,6 +887,16 @@ def audit_closeout_registry(
             "registry_schema",
             f"registry schema is {schema!r}, expected {REGISTRY_SCHEMA}",
             "Set the registry schema to pi.closeout_evidence_registry.v1.",
+            path=REGISTRY_PATH.as_posix(),
+        ))
+
+    claim_boundary = payload.get("claim_boundary")
+    if not isinstance(claim_boundary, str) or not claim_boundary.strip():
+        findings.append(Finding(
+            "fail",
+            "registry_claim_boundary",
+            "registry has no top-level claim_boundary",
+            "Describe the advisory-only boundary so the registry cannot be mistaken for a release manifest, Beads source of truth, or mutation authority.",
             path=REGISTRY_PATH.as_posix(),
         ))
 
@@ -876,36 +922,86 @@ def audit_closeout_registry(
         ))
         historical_entries = []
 
-    registered_paths: set[str] = set()
+    current_paths: set[str] = set()
     for index, entry in enumerate(current_entries):
         artifact_path, entry_findings = validate_registry_entry(
             repo_root=repo_root,
             entry=entry,
             index=index,
+            section="current_artifacts",
             artifact_by_path=artifact_by_path,
-            seen_paths=registered_paths,
+            markdown_refs_by_artifact=markdown_refs_by_artifact,
+            seen_paths=current_paths,
+            require_markdown_reference=True,
         )
         findings.extend(entry_findings)
         if artifact_path is not None:
-            registered_paths.add(artifact_path)
+            current_paths.add(artifact_path)
 
+    historical_paths: set[str] = set()
+    for index, entry in enumerate(historical_entries):
+        artifact_path, entry_findings = validate_registry_entry(
+            repo_root=repo_root,
+            entry=entry,
+            index=index,
+            section="historical_artifacts",
+            artifact_by_path=artifact_by_path,
+            markdown_refs_by_artifact=markdown_refs_by_artifact,
+            seen_paths=historical_paths,
+            require_markdown_reference=False,
+        )
+        findings.extend(entry_findings)
+        if artifact_path is not None:
+            historical_paths.add(artifact_path)
+
+        if isinstance(entry, dict):
+            status = entry.get("status")
+            if status not in ("historical", "superseded"):
+                findings.append(Finding(
+                    "fail",
+                    "registry_historical_status",
+                    f"historical registry entry for {artifact_path} has invalid status {status!r}",
+                    "Set historical_artifacts[].status to historical or superseded.",
+                    path=f"{REGISTRY_PATH.as_posix()}:historical_artifacts[{index}]",
+                ))
+            superseded_by = entry.get("superseded_by")
+            if status == "superseded" and superseded_by not in current_paths:
+                findings.append(Finding(
+                    "fail",
+                    "registry_superseded_by",
+                    f"historical registry entry for {artifact_path} is not superseded by a current artifact",
+                    "Set superseded_by to a current_artifacts artifact_path, or mark the entry historical.",
+                    path=f"{REGISTRY_PATH.as_posix()}:historical_artifacts[{index}]",
+                ))
+
+    duplicate_historical_paths = current_paths & historical_paths
+    for artifact_path in sorted(duplicate_historical_paths):
+        findings.append(Finding(
+            "fail",
+            "registry_current_historical_conflict",
+            f"closeout artifact is both current and historical: {artifact_path}",
+            "Keep each artifact in exactly one registry section.",
+            path=artifact_path,
+        ))
+
+    registered_paths = current_paths | historical_paths
     for artifact_path in sorted(set(artifact_by_path) - registered_paths):
         findings.append(Finding(
             "fail",
             "registry_unregistered_artifact",
             f"current closeout artifact is not registered: {artifact_path}",
-            "Add the artifact to current_artifacts with its contract, decision schema, source bead or epic, references, and advisory claim boundary.",
+            "Add the artifact to current_artifacts or historical_artifacts with its contract, decision schema, source bead or epic, references, and advisory claim boundary.",
             path=artifact_path,
         ))
 
     for ref in markdown_refs:
         artifact_path = ref["artifact_path"]
-        if artifact_path not in registered_paths:
+        if artifact_path not in current_paths:
             findings.append(Finding(
                 "fail",
                 "markdown_unregistered_closeout_artifact",
-                f"{ref['source_path']}:{ref['line']} references unregistered closeout artifact {artifact_path}",
-                "Register the referenced closeout artifact as current, move it to historical_artifacts and update the prose, or update the Markdown reference.",
+                f"{ref['source_path']}:{ref['line']} references non-current closeout artifact {artifact_path}",
+                "Register the referenced closeout artifact as current, or update the Markdown reference to a current registry entry.",
                 path=f"{ref['source_path']}:{ref['line']}",
             ))
 
@@ -1025,14 +1121,14 @@ def initialize_fixture_repo(root: Path, now: datetime) -> str:
 
 def registry_entry(
     *,
-    path: str,
+    artifact_path: str,
     contract_path: str,
     decision_gate_schema: str,
     source_bead_or_epic: str,
     reference_paths: list[str],
 ) -> dict[str, Any]:
     return {
-        "path": path,
+        "artifact_path": artifact_path,
         "contract_path": contract_path,
         "decision_gate_schema": decision_gate_schema,
         "source_bead_or_epic": source_bead_or_epic,
@@ -1150,7 +1246,7 @@ def write_fixture(root: Path, now: datetime, commit: str, generated_at: datetime
         root,
         [
             registry_entry(
-                path="docs/evidence/demo-closeout-gate.json",
+                artifact_path="docs/evidence/demo-closeout-gate.json",
                 contract_path="docs/contracts/demo-closeout-gate-contract.json",
                 decision_gate_schema="pi.demo.closeout_gate.v1",
                 source_bead_or_epic="bd-demo",
@@ -1196,16 +1292,18 @@ def write_legacy_shape_fixture(root: Path, now: datetime) -> None:
     }
     write_json(root / "docs/contracts/legacy-closeout-gate-contract.json", contract)
     write_json(root / "docs/evidence/legacy-closeout-gate.json", evidence)
+    with (root / "README.md").open("a", encoding="utf-8") as handle:
+        handle.write("Legacy closeout evidence: docs/evidence/legacy-closeout-gate.json\n")
     with (root / ".beads/issues.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"id": "bd-legacy.1", "status": "closed"}) + "\n")
     entries = read_fixture_registry_entries(root)
     entries.append(
         registry_entry(
-            path="docs/evidence/legacy-closeout-gate.json",
+            artifact_path="docs/evidence/legacy-closeout-gate.json",
             contract_path="docs/contracts/legacy-closeout-gate-contract.json",
             decision_gate_schema="pi.demo.legacy_closeout_gate.v1",
             source_bead_or_epic="bd-legacy",
-            reference_paths=[],
+            reference_paths=["README.md"],
         )
     )
     write_fixture_registry(root, entries)
@@ -1225,12 +1323,22 @@ def run_self_test() -> int:
             return 2
 
         registry_missing_artifact = load_json_object(root / REGISTRY_PATH)
-        registry_missing_artifact["current_artifacts"][0]["path"] = "docs/evidence/missing-closeout-gate.json"
+        registry_missing_artifact["current_artifacts"][0]["artifact_path"] = "docs/evidence/missing-closeout-gate.json"
         write_json(root / REGISTRY_PATH, registry_missing_artifact)
         registry_missing_status, registry_missing = build_summary(root, now, max_age_days=14)
         if registry_missing_status != 1 or "registry_missing_artifact" not in json.dumps(registry_missing):
             print(json.dumps(registry_missing, indent=2))
             print("SELF-TEST FAIL: registry missing artifact should fail")
+            return 2
+
+        write_fixture(root, now, commit)
+        registry_schema = load_json_object(root / REGISTRY_PATH)
+        registry_schema["schema"] = "pi.demo.wrong_registry.v1"
+        write_json(root / REGISTRY_PATH, registry_schema)
+        registry_schema_status, registry_schema_report = build_summary(root, now, max_age_days=14)
+        if registry_schema_status != 1 or "registry_schema" not in json.dumps(registry_schema_report):
+            print(json.dumps(registry_schema_report, indent=2))
+            print("SELF-TEST FAIL: registry schema mismatch should fail")
             return 2
 
         write_fixture(root, now, commit)
@@ -1377,6 +1485,22 @@ def run_self_test() -> int:
         old_payload = load_json_object(root / "docs/evidence/demo-closeout-gate.json")
         old_payload["generated_at"] = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
         write_json(old_path, old_payload)
+        old_registry = load_json_object(root / REGISTRY_PATH)
+        old_registry["historical_artifacts"] = [
+            {
+                "artifact_path": "docs/evidence/demo-old-closeout-gate.json",
+                "contract_path": "docs/contracts/demo-closeout-gate-contract.json",
+                "decision_gate_schema": "pi.demo.closeout_gate.v1",
+                "source_bead_or_epic": "bd-demo",
+                "reference_paths": [],
+                "advisory_claim_boundary": (
+                    "Historical closeout evidence only; does not replace current registry entries."
+                ),
+                "status": "superseded",
+                "superseded_by": "docs/evidence/demo-closeout-gate.json",
+            }
+        ]
+        write_json(root / REGISTRY_PATH, old_registry)
         (root / "README.md").write_text(
             "Current closeout evidence: docs/evidence/demo-old-closeout-gate.json\n",
             encoding="utf-8",

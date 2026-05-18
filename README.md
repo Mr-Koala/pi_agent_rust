@@ -2105,6 +2105,18 @@ gate is advisory closeout evidence only and does not replace Beads, git, RCH,
 Agent Mail, UBS, CI, claim-integrity gates, child evidence, generated target/perf
 outputs, prior-wave evidence, or source artifacts.
 
+The closeout evidence registry at
+`docs/contracts/closeout-evidence-registry.json` is the machine-readable index
+of current advisory closeout-gate artifacts. It binds each current artifact to
+its governing contract, decision schema, source bead or epic, Markdown
+references, and advisory boundary, including current artifacts that are not
+expanded above in prose: `docs/evidence/adaptive-execution-closeout-gate.json`,
+`docs/evidence/extension-compatibility-closeout-gate.json`, and
+`docs/evidence/swarm-replay-closeout-gate.json`. The registry is not a release
+manifest, performance evidence bundle, Beads source of truth, Agent Mail
+authority, RCH authority, CI/UBS replacement, drop-in certification gate, or
+permission to delete or mutate files.
+
 The operator-perceived latency trace emits
 `pi.operator.perceived_latency_trace.v1`. It joins deterministic provider,
 RPC, TUI, tool-update, and operator-visible fixture timelines so operators can
