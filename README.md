@@ -2068,6 +2068,18 @@ current artifact is
 advisory closeout evidence only and does not replace Beads, git, RCH, UBS, CI,
 claim-integrity gates, child evidence, or source artifacts.
 
+The proof-carrying swarm test-fabric closeout gate emits
+`pi.swarm.proof_carrying_test_fabric.closeout_gate.v1`. It maps the `bd-zeccr`
+child Beads to no-mock lifecycle E2E evidence, cross-surface conformance,
+operator evidence goldens, structure-aware fuzz/property coverage, metamorphic
+replay equivalence, source-boundary checks, pushed refs, negative controls, and
+quality gates. It is governed by
+`docs/contracts/proof-carrying-swarm-test-fabric-closeout-gate-contract.json`;
+the current artifact is
+`docs/evidence/proof-carrying-swarm-test-fabric-closeout-gate.json`. The gate is
+advisory closeout evidence only and does not replace Beads, git, RCH, Agent
+Mail, UBS, CI, claim-integrity gates, child evidence, or source artifacts.
+
 For the full launch, throttling, recovery, and handoff workflow for large
 multi-agent runs, see [docs/swarm-operations-runbook.md](docs/swarm-operations-runbook.md).
 

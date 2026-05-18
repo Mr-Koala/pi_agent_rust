@@ -1,0 +1,836 @@
+{
+  "checklist": [
+    {
+      "evidence": [
+        {
+          "child_statuses": {
+            "bd-zeccr.1": "closed",
+            "bd-zeccr.2": "closed",
+            "bd-zeccr.3": "closed",
+            "bd-zeccr.4": "closed",
+            "bd-zeccr.5": "closed"
+          },
+          "close_reasons": {
+            "bd-zeccr.1": "Completed no-mock lifecycle E2E harness with guarded JSONL",
+            "bd-zeccr.2": "Completed cross-surface swarm conformance matrix",
+            "bd-zeccr.3": "Completed golden operator evidence artifacts with scrubbed projections and negative control",
+            "bd-zeccr.4": "Completed structure-aware swarm input fuzz/property harnesses with minimized golden fixture",
+            "bd-zeccr.5": "Completed metamorphic swarm replay equivalence transforms and negative control"
+          },
+          "path": ".beads/issues.jsonl"
+        }
+      ],
+      "id": "child_beads_closed",
+      "issue": null,
+      "requirement": "All proof-carrying test-fabric child Beads are closed before closeout.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "artifact_paths_exist": true,
+          "child_artifact_map": [
+            {
+              "bead_id": "bd-zeccr.1",
+              "claim_boundary_text": "No-mock lifecycle E2E evidence uses real temp workspaces and fixture-gated degraded coordination only; it blocks production URLs, ambient API keys, destructive operations, and live Agent Mail/RCH mutation.",
+              "close_reason": "Completed no-mock lifecycle E2E harness with guarded JSONL",
+              "code_paths": [
+                "tests/e2e_swarm_flight_recorder.rs"
+              ],
+              "commit": "0730f099ab0a39a12e4096cb6d7f765b36763d13",
+              "docs_or_evidence_paths": [
+                ".beads/issues.jsonl"
+              ],
+              "negative_control": {
+                "evidence": [
+                  "production_url_blocked",
+                  "ambient_api_key_blocked",
+                  "destructive_filesystem_operation_blocked",
+                  "live Agent Mail and RCH mutations"
+                ],
+                "id": "guarded_jsonl_rejects_unsafe_live_mutation"
+              },
+              "status": "closed",
+              "test_paths": [
+                "tests/e2e_swarm_flight_recorder.rs"
+              ],
+              "title": "Add no-mock swarm lifecycle E2E scenario harness",
+              "validation_commands": [
+                "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/<agent>/target TMPDIR=/data/tmp/pi_agent_rust_cargo/<agent>/tmp cargo test --test e2e_swarm_flight_recorder no_mock_swarm_lifecycle_e2e_emits_guarded_jsonl",
+                "cargo fmt --check",
+                "rch exec -- env ... cargo check --all-targets",
+                "rch exec -- env ... cargo clippy --all-targets -- -D warnings",
+                "timeout 60s ubs --staged --only=rust .",
+                "./scripts/reconcile_beads_ledger.sh"
+              ]
+            },
+            {
+              "bead_id": "bd-zeccr.2",
+              "claim_boundary_text": "Cross-surface conformance matrix is specification-derived test fabric evidence and not a release, performance, or drop-in certification claim.",
+              "close_reason": "Completed cross-surface swarm conformance matrix",
+              "code_paths": [
+                "tests/cross_surface_swarm_conformance_matrix.rs",
+                "docs/evidence/cross-surface-swarm-conformance-matrix.json"
+              ],
+              "commit": "f5a3c0bdd43eb37bd72a9767bdcbfe6b1cf7a03d",
+              "docs_or_evidence_paths": [
+                "docs/evidence/cross-surface-swarm-conformance-matrix.json"
+              ],
+              "negative_control": {
+                "evidence": [
+                  "cross_surface_swarm_matrix_negative_controls_fail_closed",
+                  "negative_controls"
+                ],
+                "id": "missing_or_malformed_invariant_fails_matrix"
+              },
+              "status": "closed",
+              "test_paths": [
+                "tests/cross_surface_swarm_conformance_matrix.rs"
+              ],
+              "title": "Add cross-surface swarm conformance matrix",
+              "validation_commands": [
+                "python3 -m json.tool docs/evidence/cross-surface-swarm-conformance-matrix.json",
+                "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/<agent>/target TMPDIR=/data/tmp/pi_agent_rust_cargo/<agent>/tmp cargo test --test cross_surface_swarm_conformance_matrix -- --nocapture",
+                "cargo fmt --check",
+                "git diff --check",
+                "rch exec -- env ... cargo check --all-targets",
+                "rch exec -- env ... cargo clippy --all-targets -- -D warnings",
+                "./scripts/reconcile_beads_ledger.sh"
+              ]
+            },
+            {
+              "bead_id": "bd-zeccr.3",
+              "claim_boundary_text": "Golden artifacts are canonicalized regression projections; they freeze reviewed operator-evidence shape without freezing volatile timestamps, paths, hashes, or machine-local counts.",
+              "close_reason": "Completed golden operator evidence artifacts with scrubbed projections and negative control",
+              "code_paths": [
+                "scripts/build_swarm_operator_runpack.py"
+              ],
+              "commit": "3bc08ca570ac04fd55072c0be8468b330596ff9b",
+              "docs_or_evidence_paths": [
+                "tests/golden_corpus/swarm_operator_runpack"
+              ],
+              "negative_control": {
+                "evidence": [
+                  "MALFORMED_SOURCE_GOLDEN",
+                  "assert_work_admission_gate_missing_field_negative_control"
+                ],
+                "id": "missing_decision_field_rejected"
+              },
+              "status": "closed",
+              "test_paths": [
+                "scripts/build_swarm_operator_runpack.py"
+              ],
+              "title": "Freeze golden operator evidence artifacts",
+              "validation_commands": [
+                "python3 -m py_compile scripts/build_swarm_operator_runpack.py",
+                "UPDATE_SWARM_OPERATOR_RUNPACK_GOLDEN=1 python3 scripts/build_swarm_operator_runpack.py --self-test",
+                "python3 scripts/build_swarm_operator_runpack.py --self-test",
+                "python3 -m json.tool tests/golden_corpus/swarm_operator_runpack/*.json",
+                "git diff --check",
+                "./scripts/reconcile_beads_ledger.sh"
+              ]
+            },
+            {
+              "bead_id": "bd-zeccr.4",
+              "claim_boundary_text": "Structured input fuzz coverage is deterministic, fixture-backed, network-free parser/input boundary evidence and does not include large corpora, live provider calls, or release claims.",
+              "close_reason": "Completed structure-aware swarm input fuzz/property harnesses with minimized golden fixture",
+              "code_paths": [
+                "scripts/build_swarm_operator_runpack.py"
+              ],
+              "commit": "d2b6c782d78472bb104a644b6533a05c438e576b",
+              "docs_or_evidence_paths": [
+                "tests/golden_corpus/swarm_operator_runpack/structured_input_fuzz_projection.json"
+              ],
+              "negative_control": {
+                "evidence": [
+                  "unsupported_schema_fail_closed",
+                  "ambiguous_command_fail_closed",
+                  "oversized_beads_bounded"
+                ],
+                "id": "unsupported_schema_and_ambiguous_inputs_fail_closed"
+              },
+              "status": "closed",
+              "test_paths": [
+                "scripts/build_swarm_operator_runpack.py"
+              ],
+              "title": "Add structure-aware swarm input fuzz/property harnesses",
+              "validation_commands": [
+                "python3 -m py_compile scripts/build_swarm_operator_runpack.py",
+                "python3 scripts/build_swarm_operator_runpack.py --self-test",
+                "python3 -m json.tool tests/golden_corpus/swarm_operator_runpack/structured_input_fuzz_projection.json",
+                "git diff --check",
+                "./scripts/reconcile_beads_ledger.sh",
+                "timeout 60s ubs --staged --only=rust ."
+              ]
+            },
+            {
+              "bead_id": "bd-zeccr.5",
+              "claim_boundary_text": "Metamorphic replay evidence compares deterministic state projections only; it does not use fuzzy LLM judging, live model calls, or broad session-storage rewrites.",
+              "close_reason": "Completed metamorphic swarm replay equivalence transforms and negative control",
+              "code_paths": [
+                "tests/swarm_replay_ingestor.rs"
+              ],
+              "commit": "f001464e216fa02d7e691fd7831e24077f92c685",
+              "docs_or_evidence_paths": [
+                ".beads/issues.jsonl"
+              ],
+              "negative_control": {
+                "evidence": [
+                  "negative_non_equivalent_final_bead_state",
+                  "mismatch_reason"
+                ],
+                "id": "non_equivalent_final_bead_state_reports_structured_mismatch"
+              },
+              "status": "closed",
+              "test_paths": [
+                "tests/swarm_replay_ingestor.rs"
+              ],
+              "title": "Add metamorphic swarm replay and compaction equivalence tests",
+              "validation_commands": [
+                "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/<agent>/target TMPDIR=/data/tmp/pi_agent_rust_cargo/<agent>/tmp cargo test --test swarm_replay_ingestor metamorphic_swarm -- --nocapture",
+                "cargo fmt --check",
+                "rch exec -- env ... cargo check --all-targets",
+                "rch exec -- env ... cargo clippy --all-targets -- -D warnings",
+                "timeout 60s ubs --staged --only=rust .",
+                "./scripts/reconcile_beads_ledger.sh"
+              ]
+            }
+          ],
+          "commits_present": true,
+          "weak_child_rows": []
+        }
+      ],
+      "id": "child_artifact_mapping",
+      "issue": null,
+      "requirement": "Every child bead maps to pushed commits, source paths, tests or fixtures, evidence artifacts, validation commands, close reason, and claim-boundary text.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "path": "tests/e2e_swarm_flight_recorder.rs"
+        }
+      ],
+      "id": "no_mock_lifecycle_e2e",
+      "issue": null,
+      "requirement": "No-mock lifecycle E2E emits guarded JSONL and fails closed on production URL, ambient key, destructive operation, and live coordination mutation probes.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "path": "tests/cross_surface_swarm_conformance_matrix.rs"
+        },
+        {
+          "path": "docs/evidence/cross-surface-swarm-conformance-matrix.json"
+        }
+      ],
+      "id": "cross_surface_conformance_matrix",
+      "issue": null,
+      "requirement": "Cross-surface matrix covers provider stream ordering, tool mutation barriers, RPC framing, session replay/index consistency, extension denial, TUI frame budget, and negative controls.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "path": "scripts/build_swarm_operator_runpack.py"
+        },
+        {
+          "path": "tests/golden_corpus/swarm_operator_runpack"
+        }
+      ],
+      "id": "golden_operator_artifacts",
+      "issue": null,
+      "requirement": "Golden operator artifacts are canonicalized and include runpack, autopilot plan, work-admission gate, decision gate, malformed-source negative projection, and drift diff behavior.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "path": "scripts/build_swarm_operator_runpack.py"
+        },
+        {
+          "path": "tests/golden_corpus/swarm_operator_runpack/structured_input_fuzz_projection.json"
+        }
+      ],
+      "id": "structured_input_fuzz_harness",
+      "issue": null,
+      "requirement": "Structured input fuzz harness covers malformed evidence, nested JSON redaction, path canonicalization, oversized bounded inputs, ordering perturbation, unsupported schemas, and ambiguous commands.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "path": "tests/swarm_replay_ingestor.rs"
+        }
+      ],
+      "id": "metamorphic_replay_equivalence",
+      "issue": null,
+      "requirement": "Metamorphic replay test covers low-value reorder/coalesce, compaction boundary shift, branch replay with identical final markers, deterministic comparison JSONL, and a non-equivalent negative control.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "boundary": "Beads issue state, dependencies, comments, and close reasons remain the work ledger.",
+          "evidence": [
+            ".beads/issues.jsonl"
+          ],
+          "id": "beads_are_source_of_truth",
+          "status": "pass"
+        },
+        {
+          "boundary": "Agent Mail coordinates ownership and reservations; when schema-corrupt, Beads assignee/status is the soft lock and closeout records that limitation.",
+          "evidence": [
+            "AGENTS.md"
+          ],
+          "id": "agent_mail_is_coordination_only",
+          "status": "pass"
+        },
+        {
+          "boundary": "The proof-carrying test-fabric closeout gate summarizes existing evidence and does not mutate runtime, coordination, RCH, temp, or source state.",
+          "evidence": [
+            "scripts/build_swarm_operator_runpack.py"
+          ],
+          "id": "read_only_gate",
+          "status": "pass"
+        },
+        {
+          "boundary": "Heavy Cargo validation remains RCH-backed and cannot fall back to local CPU-intensive builds.",
+          "evidence": [
+            "AGENTS.md"
+          ],
+          "id": "rch_required_for_heavy_cargo",
+          "status": "pass"
+        },
+        {
+          "boundary": "Staged UBS remains mandatory before the closeout commit.",
+          "evidence": [
+            "AGENTS.md"
+          ],
+          "id": "staged_ubs_required",
+          "status": "pass"
+        },
+        {
+          "boundary": "Beads ledger reconciliation remains mandatory before the closeout commit.",
+          "evidence": [
+            "scripts/reconcile_beads_ledger.sh"
+          ],
+          "id": "beads_ledger_required",
+          "status": "pass"
+        },
+        {
+          "boundary": "Test-fabric closeout evidence is fixture-backed and must not call production providers, production URLs, Agent Mail mutations, or RCH mutations.",
+          "evidence": [
+            "tests/e2e_swarm_flight_recorder.rs",
+            "scripts/build_swarm_operator_runpack.py"
+          ],
+          "id": "no_live_network_or_provider_calls",
+          "status": "pass"
+        },
+        {
+          "boundary": "The closeout gate does not authorize file or temp artifact deletion.",
+          "evidence": [
+            "AGENTS.md",
+            "tests/e2e_swarm_flight_recorder.rs"
+          ],
+          "id": "no_file_deletion_authority",
+          "status": "pass"
+        },
+        {
+          "boundary": "Proof-carrying test-fabric evidence is advisory operator evidence and does not authorize release, capacity, performance, benchmark, or strict drop-in claims.",
+          "evidence": [
+            "docs/contracts/dropin-certification-contract.json",
+            "docs/evidence/dropin-certification-verdict.json",
+            "README.md"
+          ],
+          "id": "no_release_or_dropin_claims",
+          "status": "pass"
+        },
+        {
+          "boundary": "The closeout gate summarizes child evidence and does not replace source tests, checked-in artifacts, Beads, pushed commits, RCH, UBS, CI, or human review.",
+          "evidence": [
+            "docs/evidence/proof-carrying-swarm-test-fabric-closeout-gate.json"
+          ],
+          "id": "closeout_does_not_replace_child_artifacts",
+          "status": "pass"
+        }
+      ],
+      "id": "source_boundaries",
+      "issue": null,
+      "requirement": "Closeout source boundaries preserve Beads, Agent Mail, RCH, staged UBS, ledger reconciliation, no-live-network, no-delete, and release/drop-in authority boundaries.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "child_commits": [
+            "0730f099ab0a39a12e4096cb6d7f765b36763d13",
+            "f5a3c0bdd43eb37bd72a9767bdcbfe6b1cf7a03d",
+            "3bc08ca570ac04fd55072c0be8468b330596ff9b",
+            "d2b6c782d78472bb104a644b6533a05c438e576b",
+            "f001464e216fa02d7e691fd7831e24077f92c685"
+          ],
+          "head_before_closeout_commit": "c18e0c6234fa8087146f15288090949985c772a5",
+          "origin_legacy_mirror_before_closeout_commit": "c18e0c6234fa8087146f15288090949985c772a5",
+          "origin_main_before_closeout_commit": "c18e0c6234fa8087146f15288090949985c772a5",
+          "pushed_remote_refs_equal_head": true
+        }
+      ],
+      "id": "pushed_commits",
+      "issue": null,
+      "requirement": "All child implementation commits are pushed to origin/main and mirrored to the legacy branch before closeout generation.",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        {
+          "heavy_cargo_required_for_closeout_script": true,
+          "heavy_cargo_uses_rch": true,
+          "provided_quality_gates": [
+            {
+              "command": "python3 -m py_compile scripts/build_swarm_operator_runpack.py",
+              "id": "py_compile",
+              "status": "pass"
+            },
+            {
+              "command": "python3 scripts/build_swarm_operator_runpack.py --self-test",
+              "id": "runpack_self_test",
+              "status": "pass"
+            },
+            {
+              "command": "python3 -m json.tool docs/contracts/proof-carrying-swarm-test-fabric-closeout-gate-contract.json >/dev/null && python3 -m json.tool docs/evidence/proof-carrying-swarm-test-fabric-closeout-gate.json >/dev/null",
+              "id": "json_contracts",
+              "status": "pass"
+            },
+            {
+              "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/tmp cargo test --test proof_carrying_swarm_test_fabric_closeout_gate_contract -- --nocapture",
+              "id": "proof_carrying_swarm_test_fabric_closeout_gate_contract_rch",
+              "status": "pass"
+            },
+            {
+              "command": "cargo fmt --check",
+              "id": "cargo_fmt",
+              "status": "pass"
+            },
+            {
+              "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/tmp cargo check --all-targets",
+              "id": "cargo_check_all_targets_rch",
+              "status": "pass"
+            },
+            {
+              "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/tmp cargo clippy --all-targets -- -D warnings",
+              "id": "cargo_clippy_all_targets_rch",
+              "status": "pass"
+            },
+            {
+              "command": "git diff --check",
+              "id": "git_diff_check",
+              "status": "pass"
+            },
+            {
+              "command": "timeout 60s ubs --staged --only=rust .",
+              "id": "staged_ubs",
+              "status": "pass"
+            },
+            {
+              "command": "./scripts/reconcile_beads_ledger.sh",
+              "id": "beads_ledger_reconcile",
+              "status": "pass"
+            }
+          ],
+          "required_quality_gates": [
+            "py_compile",
+            "runpack_self_test",
+            "json_contracts",
+            "proof_carrying_swarm_test_fabric_closeout_gate_contract_rch",
+            "cargo_fmt",
+            "cargo_check_all_targets_rch",
+            "cargo_clippy_all_targets_rch",
+            "git_diff_check",
+            "staged_ubs",
+            "beads_ledger_reconcile"
+          ]
+        }
+      ],
+      "id": "quality_gates",
+      "issue": null,
+      "requirement": "Required closeout quality gates passed for scripts, contracts/evidence JSON, focused RCH contract test, formatting, all-target check, clippy, git diff, staged UBS, and Beads ledger reconciliation.",
+      "status": "pass"
+    }
+  ],
+  "child_artifact_map": [
+    {
+      "bead_id": "bd-zeccr.1",
+      "claim_boundary_text": "No-mock lifecycle E2E evidence uses real temp workspaces and fixture-gated degraded coordination only; it blocks production URLs, ambient API keys, destructive operations, and live Agent Mail/RCH mutation.",
+      "close_reason": "Completed no-mock lifecycle E2E harness with guarded JSONL",
+      "code_paths": [
+        "tests/e2e_swarm_flight_recorder.rs"
+      ],
+      "commit": "0730f099ab0a39a12e4096cb6d7f765b36763d13",
+      "docs_or_evidence_paths": [
+        ".beads/issues.jsonl"
+      ],
+      "negative_control": {
+        "evidence": [
+          "production_url_blocked",
+          "ambient_api_key_blocked",
+          "destructive_filesystem_operation_blocked",
+          "live Agent Mail and RCH mutations"
+        ],
+        "id": "guarded_jsonl_rejects_unsafe_live_mutation"
+      },
+      "status": "closed",
+      "test_paths": [
+        "tests/e2e_swarm_flight_recorder.rs"
+      ],
+      "title": "Add no-mock swarm lifecycle E2E scenario harness",
+      "validation_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/<agent>/target TMPDIR=/data/tmp/pi_agent_rust_cargo/<agent>/tmp cargo test --test e2e_swarm_flight_recorder no_mock_swarm_lifecycle_e2e_emits_guarded_jsonl",
+        "cargo fmt --check",
+        "rch exec -- env ... cargo check --all-targets",
+        "rch exec -- env ... cargo clippy --all-targets -- -D warnings",
+        "timeout 60s ubs --staged --only=rust .",
+        "./scripts/reconcile_beads_ledger.sh"
+      ]
+    },
+    {
+      "bead_id": "bd-zeccr.2",
+      "claim_boundary_text": "Cross-surface conformance matrix is specification-derived test fabric evidence and not a release, performance, or drop-in certification claim.",
+      "close_reason": "Completed cross-surface swarm conformance matrix",
+      "code_paths": [
+        "tests/cross_surface_swarm_conformance_matrix.rs",
+        "docs/evidence/cross-surface-swarm-conformance-matrix.json"
+      ],
+      "commit": "f5a3c0bdd43eb37bd72a9767bdcbfe6b1cf7a03d",
+      "docs_or_evidence_paths": [
+        "docs/evidence/cross-surface-swarm-conformance-matrix.json"
+      ],
+      "negative_control": {
+        "evidence": [
+          "cross_surface_swarm_matrix_negative_controls_fail_closed",
+          "negative_controls"
+        ],
+        "id": "missing_or_malformed_invariant_fails_matrix"
+      },
+      "status": "closed",
+      "test_paths": [
+        "tests/cross_surface_swarm_conformance_matrix.rs"
+      ],
+      "title": "Add cross-surface swarm conformance matrix",
+      "validation_commands": [
+        "python3 -m json.tool docs/evidence/cross-surface-swarm-conformance-matrix.json",
+        "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/<agent>/target TMPDIR=/data/tmp/pi_agent_rust_cargo/<agent>/tmp cargo test --test cross_surface_swarm_conformance_matrix -- --nocapture",
+        "cargo fmt --check",
+        "git diff --check",
+        "rch exec -- env ... cargo check --all-targets",
+        "rch exec -- env ... cargo clippy --all-targets -- -D warnings",
+        "./scripts/reconcile_beads_ledger.sh"
+      ]
+    },
+    {
+      "bead_id": "bd-zeccr.3",
+      "claim_boundary_text": "Golden artifacts are canonicalized regression projections; they freeze reviewed operator-evidence shape without freezing volatile timestamps, paths, hashes, or machine-local counts.",
+      "close_reason": "Completed golden operator evidence artifacts with scrubbed projections and negative control",
+      "code_paths": [
+        "scripts/build_swarm_operator_runpack.py"
+      ],
+      "commit": "3bc08ca570ac04fd55072c0be8468b330596ff9b",
+      "docs_or_evidence_paths": [
+        "tests/golden_corpus/swarm_operator_runpack"
+      ],
+      "negative_control": {
+        "evidence": [
+          "MALFORMED_SOURCE_GOLDEN",
+          "assert_work_admission_gate_missing_field_negative_control"
+        ],
+        "id": "missing_decision_field_rejected"
+      },
+      "status": "closed",
+      "test_paths": [
+        "scripts/build_swarm_operator_runpack.py"
+      ],
+      "title": "Freeze golden operator evidence artifacts",
+      "validation_commands": [
+        "python3 -m py_compile scripts/build_swarm_operator_runpack.py",
+        "UPDATE_SWARM_OPERATOR_RUNPACK_GOLDEN=1 python3 scripts/build_swarm_operator_runpack.py --self-test",
+        "python3 scripts/build_swarm_operator_runpack.py --self-test",
+        "python3 -m json.tool tests/golden_corpus/swarm_operator_runpack/*.json",
+        "git diff --check",
+        "./scripts/reconcile_beads_ledger.sh"
+      ]
+    },
+    {
+      "bead_id": "bd-zeccr.4",
+      "claim_boundary_text": "Structured input fuzz coverage is deterministic, fixture-backed, network-free parser/input boundary evidence and does not include large corpora, live provider calls, or release claims.",
+      "close_reason": "Completed structure-aware swarm input fuzz/property harnesses with minimized golden fixture",
+      "code_paths": [
+        "scripts/build_swarm_operator_runpack.py"
+      ],
+      "commit": "d2b6c782d78472bb104a644b6533a05c438e576b",
+      "docs_or_evidence_paths": [
+        "tests/golden_corpus/swarm_operator_runpack/structured_input_fuzz_projection.json"
+      ],
+      "negative_control": {
+        "evidence": [
+          "unsupported_schema_fail_closed",
+          "ambiguous_command_fail_closed",
+          "oversized_beads_bounded"
+        ],
+        "id": "unsupported_schema_and_ambiguous_inputs_fail_closed"
+      },
+      "status": "closed",
+      "test_paths": [
+        "scripts/build_swarm_operator_runpack.py"
+      ],
+      "title": "Add structure-aware swarm input fuzz/property harnesses",
+      "validation_commands": [
+        "python3 -m py_compile scripts/build_swarm_operator_runpack.py",
+        "python3 scripts/build_swarm_operator_runpack.py --self-test",
+        "python3 -m json.tool tests/golden_corpus/swarm_operator_runpack/structured_input_fuzz_projection.json",
+        "git diff --check",
+        "./scripts/reconcile_beads_ledger.sh",
+        "timeout 60s ubs --staged --only=rust ."
+      ]
+    },
+    {
+      "bead_id": "bd-zeccr.5",
+      "claim_boundary_text": "Metamorphic replay evidence compares deterministic state projections only; it does not use fuzzy LLM judging, live model calls, or broad session-storage rewrites.",
+      "close_reason": "Completed metamorphic swarm replay equivalence transforms and negative control",
+      "code_paths": [
+        "tests/swarm_replay_ingestor.rs"
+      ],
+      "commit": "f001464e216fa02d7e691fd7831e24077f92c685",
+      "docs_or_evidence_paths": [
+        ".beads/issues.jsonl"
+      ],
+      "negative_control": {
+        "evidence": [
+          "negative_non_equivalent_final_bead_state",
+          "mismatch_reason"
+        ],
+        "id": "non_equivalent_final_bead_state_reports_structured_mismatch"
+      },
+      "status": "closed",
+      "test_paths": [
+        "tests/swarm_replay_ingestor.rs"
+      ],
+      "title": "Add metamorphic swarm replay and compaction equivalence tests",
+      "validation_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/<agent>/target TMPDIR=/data/tmp/pi_agent_rust_cargo/<agent>/tmp cargo test --test swarm_replay_ingestor metamorphic_swarm -- --nocapture",
+        "cargo fmt --check",
+        "rch exec -- env ... cargo check --all-targets",
+        "rch exec -- env ... cargo clippy --all-targets -- -D warnings",
+        "timeout 60s ubs --staged --only=rust .",
+        "./scripts/reconcile_beads_ledger.sh"
+      ]
+    }
+  ],
+  "claim_boundaries": {
+    "allowed_claim": "advisory proof-carrying swarm test-fabric closeout evidence only",
+    "benchmark_claim_authorized": false,
+    "closeout_authorizes_file_deletion": false,
+    "closeout_mutates_agent_mail_rch_or_runtime": false,
+    "closeout_mutates_sources": false,
+    "closeout_replaces_child_artifacts": false,
+    "closeout_replaces_source_artifacts": false,
+    "closeout_runs_live_provider_or_network_calls": false,
+    "file_deletion_authorized": false,
+    "live_agent_mail_or_rch_mutation_authorized": false,
+    "parent_can_close_before_closeout_commit_is_pushed": false,
+    "performance_or_capacity_claim_authorized": false,
+    "production_network_or_model_calls_authorized": false,
+    "strict_dropin_or_release_claim_authorized": false
+  },
+  "decision": "close_final_gate_and_parent_epic",
+  "epic_can_close_after_this_commit": true,
+  "final_gate_bead": {
+    "assignee": "Codex",
+    "id": "bd-zeccr.6",
+    "status": "in_progress"
+  },
+  "follow_up_beads": [],
+  "follow_up_required": false,
+  "generated_at": "2026-05-18T04:20:00+00:00",
+  "known_limitations": [
+    "Proof-carrying swarm test-fabric closeout evidence is advisory operator evidence only.",
+    "Child tests, checked-in evidence, Beads, pushed commits, RCH, Agent Mail health, staged UBS, and CI remain their own sources of truth.",
+    "Agent Mail was schema-corrupt during closeout; Beads assignment/comments were used as the soft lock and this artifact does not prove reservations were absent.",
+    "This is not release performance evidence, not capacity evidence, not benchmark evidence, and not strict drop-in certification evidence.",
+    "This is not permission to skip RCH, staged UBS, Beads ledger reconciliation, pushed refs, child source artifact inspection, or CI.",
+    "This closeout does not authorize file deletion, production network access, live model calls, live Agent Mail mutation, or live RCH worker mutation."
+  ],
+  "missing_checks": [],
+  "operator_summary": {
+    "claim_boundary": "advisory proof-carrying swarm test-fabric closeout evidence only",
+    "covered_child_beads": [
+      "bd-zeccr.1",
+      "bd-zeccr.2",
+      "bd-zeccr.3",
+      "bd-zeccr.4",
+      "bd-zeccr.5"
+    ],
+    "next_action": "close_final_gate_and_parent_epic",
+    "ready_to_close_parent_after_commit": true,
+    "verdict": "pass"
+  },
+  "parent_epic": {
+    "id": "bd-zeccr",
+    "status": "deferred",
+    "title": "Eighth-wave proof-carrying swarm test fabric roadmap"
+  },
+  "purpose": "prompt_to_artifact_proof_carrying_swarm_test_fabric_closeout_gate_not_source_of_truth",
+  "quality_gate_results": [
+    {
+      "command": "python3 -m py_compile scripts/build_swarm_operator_runpack.py",
+      "id": "py_compile",
+      "status": "pass"
+    },
+    {
+      "command": "python3 scripts/build_swarm_operator_runpack.py --self-test",
+      "id": "runpack_self_test",
+      "status": "pass"
+    },
+    {
+      "command": "python3 -m json.tool docs/contracts/proof-carrying-swarm-test-fabric-closeout-gate-contract.json >/dev/null && python3 -m json.tool docs/evidence/proof-carrying-swarm-test-fabric-closeout-gate.json >/dev/null",
+      "id": "json_contracts",
+      "status": "pass"
+    },
+    {
+      "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/tmp cargo test --test proof_carrying_swarm_test_fabric_closeout_gate_contract -- --nocapture",
+      "id": "proof_carrying_swarm_test_fabric_closeout_gate_contract_rch",
+      "status": "pass"
+    },
+    {
+      "command": "cargo fmt --check",
+      "id": "cargo_fmt",
+      "status": "pass"
+    },
+    {
+      "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/tmp cargo check --all-targets",
+      "id": "cargo_check_all_targets_rch",
+      "status": "pass"
+    },
+    {
+      "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/target TMPDIR=/data/tmp/pi_agent_rust_cargo/codex_bd_zeccr_6/tmp cargo clippy --all-targets -- -D warnings",
+      "id": "cargo_clippy_all_targets_rch",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "id": "git_diff_check",
+      "status": "pass"
+    },
+    {
+      "command": "timeout 60s ubs --staged --only=rust .",
+      "id": "staged_ubs",
+      "status": "pass"
+    },
+    {
+      "command": "./scripts/reconcile_beads_ledger.sh",
+      "id": "beads_ledger_reconcile",
+      "status": "pass"
+    }
+  ],
+  "remaining_follow_ups": [],
+  "required_checks": [
+    "child_beads_closed",
+    "child_artifact_mapping",
+    "no_mock_lifecycle_e2e",
+    "cross_surface_conformance_matrix",
+    "golden_operator_artifacts",
+    "structured_input_fuzz_harness",
+    "metamorphic_replay_equivalence",
+    "source_boundaries",
+    "pushed_commits",
+    "quality_gates"
+  ],
+  "schema": "pi.swarm.proof_carrying_test_fabric.closeout_gate.v1",
+  "source_boundary_checks": [
+    {
+      "boundary": "Beads issue state, dependencies, comments, and close reasons remain the work ledger.",
+      "evidence": [
+        ".beads/issues.jsonl"
+      ],
+      "id": "beads_are_source_of_truth",
+      "status": "pass"
+    },
+    {
+      "boundary": "Agent Mail coordinates ownership and reservations; when schema-corrupt, Beads assignee/status is the soft lock and closeout records that limitation.",
+      "evidence": [
+        "AGENTS.md"
+      ],
+      "id": "agent_mail_is_coordination_only",
+      "status": "pass"
+    },
+    {
+      "boundary": "The proof-carrying test-fabric closeout gate summarizes existing evidence and does not mutate runtime, coordination, RCH, temp, or source state.",
+      "evidence": [
+        "scripts/build_swarm_operator_runpack.py"
+      ],
+      "id": "read_only_gate",
+      "status": "pass"
+    },
+    {
+      "boundary": "Heavy Cargo validation remains RCH-backed and cannot fall back to local CPU-intensive builds.",
+      "evidence": [
+        "AGENTS.md"
+      ],
+      "id": "rch_required_for_heavy_cargo",
+      "status": "pass"
+    },
+    {
+      "boundary": "Staged UBS remains mandatory before the closeout commit.",
+      "evidence": [
+        "AGENTS.md"
+      ],
+      "id": "staged_ubs_required",
+      "status": "pass"
+    },
+    {
+      "boundary": "Beads ledger reconciliation remains mandatory before the closeout commit.",
+      "evidence": [
+        "scripts/reconcile_beads_ledger.sh"
+      ],
+      "id": "beads_ledger_required",
+      "status": "pass"
+    },
+    {
+      "boundary": "Test-fabric closeout evidence is fixture-backed and must not call production providers, production URLs, Agent Mail mutations, or RCH mutations.",
+      "evidence": [
+        "tests/e2e_swarm_flight_recorder.rs",
+        "scripts/build_swarm_operator_runpack.py"
+      ],
+      "id": "no_live_network_or_provider_calls",
+      "status": "pass"
+    },
+    {
+      "boundary": "The closeout gate does not authorize file or temp artifact deletion.",
+      "evidence": [
+        "AGENTS.md",
+        "tests/e2e_swarm_flight_recorder.rs"
+      ],
+      "id": "no_file_deletion_authority",
+      "status": "pass"
+    },
+    {
+      "boundary": "Proof-carrying test-fabric evidence is advisory operator evidence and does not authorize release, capacity, performance, benchmark, or strict drop-in claims.",
+      "evidence": [
+        "docs/contracts/dropin-certification-contract.json",
+        "docs/evidence/dropin-certification-verdict.json",
+        "README.md"
+      ],
+      "id": "no_release_or_dropin_claims",
+      "status": "pass"
+    },
+    {
+      "boundary": "The closeout gate summarizes child evidence and does not replace source tests, checked-in artifacts, Beads, pushed commits, RCH, UBS, CI, or human review.",
+      "evidence": [
+        "docs/evidence/proof-carrying-swarm-test-fabric-closeout-gate.json"
+      ],
+      "id": "closeout_does_not_replace_child_artifacts",
+      "status": "pass"
+    }
+  ],
+  "status": "pass"
+}
