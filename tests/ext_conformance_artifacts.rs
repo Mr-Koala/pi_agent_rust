@@ -108,6 +108,14 @@ struct ApiUsageApi {
     shim_status: String,
 }
 
+fn matrix_api_status<'a>(module: &'a ApiUsageModule, name: &str) -> Option<&'a str> {
+    module
+        .apis
+        .iter()
+        .find(|api| api.name == name)
+        .map(|api| api.shim_status.as_str())
+}
+
 #[test]
 fn test_compat_scanner_unit_fixture_ordering() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -283,6 +291,51 @@ fn test_api_usage_matrix_net_stub_contract() {
         socket.shim_status, "stub",
         "node:net.Socket should be stubbed"
     );
+}
+
+#[test]
+fn test_api_usage_matrix_fs_shim_contract() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let matrix_path = repo_root.join("tests/ext_conformance/api_usage_matrix.json");
+    let bytes = fs::read(&matrix_path).expect("read api_usage_matrix.json");
+    let matrix: ApiUsageMatrix =
+        serde_json::from_slice(&bytes).expect("parse api_usage_matrix.json");
+
+    let fs_module = matrix
+        .node_modules
+        .iter()
+        .find(|entry| entry.module == "node:fs")
+        .expect("node:fs entry missing from api_usage_matrix.json");
+
+    assert_eq!(
+        fs_module.shim_status, "partial",
+        "node:fs should stay partial while watch remains a no-op"
+    );
+    assert_eq!(
+        matrix_api_status(fs_module, "createReadStream"),
+        Some("real")
+    );
+    assert_eq!(
+        matrix_api_status(fs_module, "createWriteStream"),
+        Some("real")
+    );
+    assert_eq!(matrix_api_status(fs_module, "readlink"), Some("real"));
+    assert_eq!(matrix_api_status(fs_module, "chmodSync"), Some("partial"));
+    assert_eq!(matrix_api_status(fs_module, "watch"), Some("stub"));
+
+    let fs_promises = matrix
+        .node_modules
+        .iter()
+        .find(|entry| entry.module == "node:fs/promises")
+        .expect("node:fs/promises entry missing from api_usage_matrix.json");
+
+    assert_eq!(
+        fs_promises.shim_status, "partial",
+        "node:fs/promises should stay partial while permission APIs are path-checking no-ops"
+    );
+    assert_eq!(matrix_api_status(fs_promises, "chmod"), Some("partial"));
+    assert_eq!(matrix_api_status(fs_promises, "chown"), Some("partial"));
+    assert_eq!(matrix_api_status(fs_promises, "utimes"), Some("partial"));
 }
 
 #[test]

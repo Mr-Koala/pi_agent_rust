@@ -1031,11 +1031,11 @@ fn fs_path_normalization() {
 }
 
 // ---------------------------------------------------------------------------
-// createReadStream / createWriteStream stubs
+// createReadStream / createWriteStream facades
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fs_stream_stubs() {
+fn fs_stream_facades() {
     futures::executor::block_on(async {
         let runtime = PiJsRuntime::with_clock_and_config(
             Arc::new(DeterministicClock::new(0)),

@@ -37,7 +37,7 @@
       "module": "node:fs",
       "extensions_using": 119,
       "tier_breakdown": { "T1": 10, "T2": 30, "T3_npm": 63, "T3_gh": 16 },
-      "shim_status": "real",
+      "shim_status": "partial",
       "criticality": "P0",
       "apis": [
         { "name": "existsSync", "call_count": 466, "shim_status": "real" },
@@ -64,13 +64,13 @@
         { "name": "appendFileSync", "call_count": 14, "shim_status": "real" },
         { "name": "rmdirSync", "call_count": 11, "shim_status": "real" },
         { "name": "watch", "call_count": 9, "shim_status": "stub" },
-        { "name": "createReadStream", "call_count": 8, "shim_status": "stub" },
+        { "name": "createReadStream", "call_count": 8, "shim_status": "real" },
         { "name": "closeSync", "call_count": 8, "shim_status": "real" },
-        { "name": "readlink", "call_count": 7, "shim_status": "stub" },
+        { "name": "readlink", "call_count": 7, "shim_status": "real" },
         { "name": "readSync", "call_count": 7, "shim_status": "real" },
         { "name": "symlink", "call_count": 6, "shim_status": "real" },
-        { "name": "createWriteStream", "call_count": 4, "shim_status": "stub" },
-        { "name": "chmodSync", "call_count": 4, "shim_status": "stub" },
+        { "name": "createWriteStream", "call_count": 4, "shim_status": "real" },
+        { "name": "chmodSync", "call_count": 4, "shim_status": "partial" },
         { "name": "writeSync", "call_count": 2, "shim_status": "real" },
         { "name": "lstatSync", "call_count": 2, "shim_status": "real" }
       ]
@@ -147,9 +147,9 @@
         { "name": "copyFile", "call_count": 3, "shim_status": "real" },
         { "name": "rename", "call_count": 3, "shim_status": "real" },
         { "name": "appendFile", "call_count": 2, "shim_status": "real" },
-        { "name": "chmod", "call_count": 1, "shim_status": "stub" },
-        { "name": "chown", "call_count": 1, "shim_status": "stub" },
-        { "name": "utimes", "call_count": 1, "shim_status": "stub" }
+        { "name": "chmod", "call_count": 1, "shim_status": "partial" },
+        { "name": "chown", "call_count": 1, "shim_status": "partial" },
+        { "name": "utimes", "call_count": 1, "shim_status": "partial" }
       ]
     },
     {
@@ -612,8 +612,8 @@
   "summary": {
     "total_virtual_modules": 62,
     "shim_completeness": {
-      "real": 18,
-      "partial": 12,
+      "real": 17,
+      "partial": 13,
       "stub": 20,
       "external": 5,
       "error_throw": 2,
@@ -630,10 +630,10 @@
       "node:readline/promises (1 ext)"
     ],
     "top_gaps_by_impact": [
-      "fs.watch (9 calls, stub - no real file watching)",
-      "fs.createReadStream (8 calls, stub)",
-      "fs.readlink (7 calls, stub)",
       "child_process.fork (72 calls, error throw)",
+      "process.getuid/getgid (16 calls, stubbed identity)",
+      "fs.watch (9 calls, stub - no real file watching)",
+      "node:readline.createInterface (7 calls, stub)",
       "node:net (7 ext, stubbed sockets)",
       "ws npm package (4 ext, missing)",
       "glob npm package (3 ext, stub only)"

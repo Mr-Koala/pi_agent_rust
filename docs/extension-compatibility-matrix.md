@@ -52,9 +52,13 @@ routes `readFileSync` and `statSync` calls through the hostcall boundary
 | `promises.access` | Real | Async wrapper around sync |
 | `promises.rm` | Real | Async wrapper around sync |
 | `promises.rename` | Real | Async wrapper around sync |
+| `promises.chmod`/`promises.chown`/`promises.utimes` | Partial | Path-checking no-ops; missing paths fail with `ENOENT` |
 | `openSync`/`closeSync`/`readSync`/`writeSync` | Real | File descriptor API |
+| `readlink`/`readlinkSync` | Real | VFS symlink target lookup |
+| `chmodSync`/`chownSync` | Partial | Path-checking no-ops; missing paths fail with `ENOENT` |
 | `createReadStream` | Real | Returns Readable stream |
 | `createWriteStream` | Real | Returns Writable stream |
+| `watch`/`watchFile` | Stub | No real file watching; returns no-op watcher facade |
 | Callback variants (`readFile`, `writeFile`, etc.) | Real | 9 callback-style functions |
 
 ### `node:crypto` Detail
