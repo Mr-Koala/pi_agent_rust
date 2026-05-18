@@ -448,6 +448,26 @@ fn test_api_usage_matrix_stream_shim_contract() {
 }
 
 #[test]
+fn test_api_usage_matrix_assert_strict_shim_contract() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let matrix_path = repo_root.join("tests/ext_conformance/api_usage_matrix.json");
+    let bytes = fs::read(&matrix_path).expect("read api_usage_matrix.json");
+    let matrix: ApiUsageMatrix =
+        serde_json::from_slice(&bytes).expect("parse api_usage_matrix.json");
+
+    let assert_strict = matrix
+        .node_modules
+        .iter()
+        .find(|entry| entry.module == "node:assert/strict")
+        .expect("node:assert/strict entry missing from api_usage_matrix.json");
+
+    assert_eq!(
+        assert_strict.shim_status, "real",
+        "node:assert/strict should not be reported as missing while the strict facade is registered"
+    );
+}
+
+#[test]
 fn test_ext_conformance_pinned_sample_compat_ledger_snapshot() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest_path = repo_root.join("docs/extension-sample.json");

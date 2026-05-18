@@ -54,7 +54,7 @@ for the API subset that extensions actually use.
 | `node:stream` | `Readable`, `Writable`, `Transform`, `Duplex`, `PassThrough`, `pipeline`, `finished` | Included | Stream constructors + helpers |
 | `node:stream/promises` | `pipeline`, `finished` | Included | Promise-based stream helpers |
 | `node:querystring` | `parse`, `stringify`, `encode`, `decode` | Included | Query string utilities |
-| `node:assert` | `ok`, `strictEqual`, `deepStrictEqual`, `throws`, `rejects`, `fail` | Included | Test assertion helpers |
+| `node:assert`, `node:assert/strict` | `ok`, `strictEqual`, `deepStrictEqual`, `throws`, `rejects`, `fail` | Included | Test assertion helpers |
 | `node:string_decoder` | `StringDecoder` | Included | UTF-8 string decoding |
 | `node:module` | `createRequire` | Included | Module system compat |
 

@@ -230,9 +230,9 @@
       "module": "node:assert/strict",
       "extensions_using": 7,
       "tier_breakdown": { "T3_npm": 4, "T3_gh": 3 },
-      "shim_status": "missing",
+      "shim_status": "real",
       "criticality": "P3",
-      "notes": "node:assert exists but strict variant is missing"
+      "notes": "Strict assert facade backed by node:assert"
     },
     {
       "module": "node:http",
@@ -612,15 +612,14 @@
   "summary": {
     "total_virtual_modules": 62,
     "shim_completeness": {
-      "real": 17,
+      "real": 18,
       "partial": 19,
       "stub": 16,
       "external": 5,
       "error_throw": 2,
-      "missing_from_corpus": 6
+      "missing_from_corpus": 5
     },
     "missing_modules_used_by_corpus": [
-      "node:assert/strict (7 ext)",
       "node:tty (1 ext)",
       "node:zlib (1 ext)",
       "node:v8 (1 ext)",
@@ -632,7 +631,6 @@
       "process.getuid/getgid (16 calls, stubbed identity)",
       "fs.watch (9 calls, stub - path-checking no-op, no real file watching)",
       "node:net (7 ext, stubbed sockets)",
-      "node:assert/strict (7 ext, missing)",
       "ws npm package (4 ext, missing)",
       "glob npm package (3 ext, stub only)"
     ]
