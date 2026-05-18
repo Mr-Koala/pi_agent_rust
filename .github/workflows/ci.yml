@@ -246,6 +246,31 @@ jobs:
             exit 1
           fi
 
+      - name: Closeout and runpack freshness integrity
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PYTHON=python3
+          elif command -v python >/dev/null 2>&1; then
+            PYTHON=python
+          else
+            echo "python interpreter not found"
+            exit 1
+          fi
+
+          closeout_report="$(mktemp)"
+          if ! "$PYTHON" scripts/check_closeout_gate_freshness.py --compact > "$closeout_report"; then
+            echo "Closeout freshness audit failed:"
+            "$PYTHON" -m json.tool "$closeout_report" || cat "$closeout_report"
+            exit 1
+          fi
+          "$PYTHON" -m json.tool "$closeout_report" >/dev/null
+
+          # Keep --run-runpack-smoke out of PR CI: it exercises the broader
+          # runpack builder. The self-test is the bounded freshness-guard
+          # contract proof; live closeout artifacts are audited above.
+          "$PYTHON" scripts/check_swarm_runpack_freshness.py --self-test
+
       - name: Built-in tool count claim guard
         run: |
           set -euo pipefail
