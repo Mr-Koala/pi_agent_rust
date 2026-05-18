@@ -67,8 +67,24 @@ pub(super) fn apply_headers_ignoring_blank_auth_overrides<'a>(
     request
 }
 
-fn vcr_client_if_enabled() -> Result<Option<Client>> {
+fn base_url_targets_loopback(base_url: &str) -> bool {
+    let Ok(url) = Url::parse(base_url) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain("localhost")) => true,
+        Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
+        Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
+        _ => false,
+    }
+}
+
+fn vcr_client_if_enabled(base_url: &str) -> Result<Option<Client>> {
     if env::var(VCR_ENV_MODE).is_err() {
+        return Ok(None);
+    }
+
+    if base_url_targets_loopback(base_url) && env::var("PI_VCR_ALLOW_LOOPBACK").is_err() {
         return Ok(None);
     }
 
@@ -883,9 +899,9 @@ pub fn create_provider(
         }
     }
 
-    let vcr_client = vcr_client_if_enabled()?;
-    let client = vcr_client.unwrap_or_else(Client::new);
     let (route, canonical_provider, effective_api) = resolve_provider_route(entry)?;
+    let vcr_client = vcr_client_if_enabled(&entry.model.base_url)?;
+    let client = vcr_client.unwrap_or_else(Client::new);
     tracing::debug!(
         event = "pi.provider.factory.select",
         provider = %entry.model.provider,
@@ -1229,6 +1245,17 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn vcr_loopback_detection_covers_provider_factory_mock_hosts() {
+        assert!(base_url_targets_loopback("http://127.0.0.1:45713/v1"));
+        assert!(base_url_targets_loopback("http://localhost:45713/v1"));
+        assert!(base_url_targets_loopback("http://[::1]:45713/v1"));
+        assert!(base_url_targets_loopback("http://127.12.34.56:45713/v1"));
+        assert!(!base_url_targets_loopback("https://api.openai.com/v1"));
+        assert!(!base_url_targets_loopback("http://127.example.com/v1"));
+        assert!(!base_url_targets_loopback("not a url"));
+    }
 
     const STREAM_SIMPLE_EXTENSION: &str = r#"
 export default function init(pi) {

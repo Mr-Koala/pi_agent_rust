@@ -3,9 +3,9 @@
   "bead": "bd-3uqg.12.1.1",
   "generated_at": "2026-02-14T00:40:00Z",
   "generated_by": "CopperBrook (Claude Opus 4.6)",
-  "last_reviewed_at": "2026-05-18T09:22:00Z",
+  "last_reviewed_at": "2026-05-18T09:38:57Z",
   "reviewed_by": "SilentReef (Codex)",
-  "review_bead": "bd-ryg6j.4",
+  "review_bead": "bd-ryg6j.5",
   "methodology": {
     "description": "Normalized discrepancy ledger synthesized from 4 upstream audit beads. Each finding is classified by root-cause and user-impact severity.",
     "source_beads": [
@@ -67,9 +67,9 @@
       "logging_schema_drift": 4
     },
     "by_remediation_status": {
-      "fixed": 15,
+      "fixed": 16,
       "partially_fixed": 0,
-      "open": 4
+      "open": 3
     }
   },
 
@@ -208,9 +208,9 @@
       "root_cause": "test_evidence_gap",
       "severity": "low",
       "user_impact": "No direct user impact. Infrastructure issue in test harness, not a provider behavior gap.",
-      "evidence": "bd-3uqg.14.3.2 comments: Deviation 3",
-      "remediation_status": "open",
-      "remediation_note": "Owned by bd-ryg6j.5. Reproduce current provider_factory behavior and either add deterministic fixture/config handling or close this as stale with focused command evidence.",
+      "evidence": "Legacy bead comments reported 10 provider_factory failures from missing `tests/fixtures/vcr/pi_runtime.json` when ambient VCR playback was enabled. Current proof: `rch exec -- env ... VCR_MODE=playback cargo test --test provider_factory -- --nocapture` passed 174 tests.",
+      "remediation_status": "fixed",
+      "remediation_note": "Provider factory now bypasses ambient VCR clients for loopback mock-server base URLs unless PI_VCR_ALLOW_LOOPBACK is set, preserving external VCR behavior while keeping mock HTTP fixture tests deterministic.",
       "remediation_beads": ["bd-ryg6j.5"],
       "affected_providers": ["multiple (test infra)"]
     },
@@ -325,6 +325,7 @@
         "DISC-007",
         "DISC-008",
         "DISC-010",
+        "DISC-011",
         "DISC-012",
         "DISC-013",
         "DISC-014",
@@ -341,7 +342,7 @@
     },
     "p2_medium_value": {
       "description": "Infrastructure/docs improvements",
-      "items": ["DISC-009", "DISC-011"]
+      "items": ["DISC-009"]
     },
     "p3_low_value": {
       "description": "Nice-to-have or informational",
@@ -354,6 +355,7 @@
       {"bead": "bd-tuh3g", "fixes": ["DISC-003"], "status": "closed"},
       {"bead": "bd-ryg6j.3", "fixes": ["DISC-003"], "status": "closed"},
       {"bead": "bd-ryg6j.4", "fixes": ["DISC-017"], "status": "closed"},
+      {"bead": "bd-ryg6j.5", "fixes": ["DISC-011"], "status": "closed"},
       {"bead": "bd-1gi21", "fixes": ["DISC-005"], "status": "closed"},
       {"bead": "bd-1fgjj", "fixes": ["DISC-006"], "status": "closed"},
       {"bead": "bd-3gsk0", "fixes": ["DISC-004"], "status": "closed"}
