@@ -6936,6 +6936,7 @@ required_fail_closed_conditions = [
     "missing_required_result_field",
     "scenario_without_sli_mapping",
     "sli_without_thresholds",
+    "responsiveness_scenario_missing_primary_latency_sli",
     "responsiveness_workflow_missing_primary_latency_sli",
     "missing_or_stale_evidence",
     "missing_absolute_or_relative_values",
@@ -6969,6 +6970,7 @@ allowed_evidence_class: list[str] = ["measured", "inferred"]
 allowed_confidence: list[str] = ["high", "medium", "low"]
 workflow_sli_mapping: list[dict] = []
 sli_threshold_ids: set[str] = set()
+scenario_to_sli_ids: dict[str, set[str]] = {}
 workflow_to_sli_ids: dict[str, set[str]] = {}
 primary_sli_ids: set[str] = set()
 responsiveness_workflow_ids: set[str] = set()
@@ -7131,6 +7133,16 @@ if isinstance(perf_sli_matrix, dict):
             if not isinstance(row, dict):
                 continue
             workflow_id = str(row.get("scenario_id", "")).strip()
+            scenario_sli_ids: set[str] = set()
+            sli_ids = row.get("sli_ids")
+            if isinstance(sli_ids, list):
+                scenario_sli_ids = {
+                    str(sli_id).strip()
+                    for sli_id in sli_ids
+                    if str(sli_id).strip()
+                }
+            if workflow_id:
+                scenario_to_sli_ids[workflow_id] = scenario_sli_ids
             user_outcome = str(row.get("user_outcome", "")).strip()
             searchable = f"{workflow_id}\n{user_outcome}".lower()
             if workflow_id and any(marker in searchable for marker in responsiveness_markers):
@@ -7209,6 +7221,30 @@ require_condition(
 for workflow_id in required_scenarios:
     if any(marker in workflow_id.lower() for marker in responsiveness_markers):
         responsiveness_workflow_ids.add(workflow_id)
+
+responsiveness_scenarios_missing_primary_latency = sorted(
+    workflow_id
+    for workflow_id in responsiveness_workflow_ids
+    if workflow_id in scenario_to_sli_ids
+    and scenario_to_sli_ids.get(workflow_id, set()).isdisjoint(primary_sli_ids)
+)
+require_condition(
+    "claim_integrity.responsiveness_scenario_missing_primary_latency_sli",
+    path=perf_sli_matrix_path,
+    ok=bool(primary_sli_ids) and not responsiveness_scenarios_missing_primary_latency,
+    ok_msg="responsiveness scenario rows retain primary user-visible latency SLI coverage",
+    fail_msg=(
+        "responsiveness scenario rows missing primary latency SLI coverage: "
+        f"{responsiveness_scenarios_missing_primary_latency}"
+        if primary_sli_ids
+        else "metric_hierarchy.primary does not define primary latency SLI IDs"
+    ),
+    strict=True,
+    remediation=(
+        "Add at least one metric_hierarchy.primary SLI to every responsiveness "
+        "scenario_sli_matrix row in docs/perf_sli_matrix.json."
+    ),
+)
 
 responsiveness_missing_primary_latency = sorted(
     workflow_id

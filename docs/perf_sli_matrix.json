@@ -1380,6 +1380,7 @@
       "missing_required_result_field",
       "scenario_without_sli_mapping",
       "sli_without_thresholds",
+      "responsiveness_scenario_missing_primary_latency_sli",
       "responsiveness_workflow_missing_primary_latency_sli",
       "missing_or_stale_evidence",
       "missing_absolute_or_relative_values",
