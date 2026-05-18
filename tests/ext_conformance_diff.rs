@@ -51,6 +51,10 @@ fn ts_default_mock_spec() -> PathBuf {
     project_root().join("tests/ext_conformance/mock_specs/mock_spec_default.json")
 }
 
+fn ts_input_transform_event_mock_spec() -> PathBuf {
+    project_root().join("tests/ext_conformance/mock_specs/mock_spec_input_transform_events.json")
+}
+
 fn pi_mono_root() -> PathBuf {
     project_root().join("legacy_pi_mono_code/pi-mono")
 }
@@ -476,6 +480,13 @@ fn run_ts_oracle_result(extension_path: &Path) -> Result<Value, String> {
 }
 
 fn run_ts_harness_result(extension_path: &Path) -> Result<Value, String> {
+    run_ts_harness_with_mock_spec_result(extension_path, &ts_default_mock_spec())
+}
+
+fn run_ts_harness_with_mock_spec_result(
+    extension_path: &Path,
+    mock_spec_path: &Path,
+) -> Result<Value, String> {
     let settings = deterministic_settings_for(extension_path);
     ensure_deterministic_dirs(&settings);
     let node_path: Cow<'_, str> = match std::env::var("NODE_PATH") {
@@ -496,7 +507,7 @@ fn run_ts_harness_result(extension_path: &Path) -> Result<Value, String> {
     cmd.arg("run")
         .arg(ts_harness_script())
         .arg(extension_path)
-        .arg(ts_default_mock_spec())
+        .arg(mock_spec_path)
         .arg(&settings.cwd)
         .current_dir(pi_mono_root())
         .stdin(Stdio::null())
@@ -1431,6 +1442,59 @@ fn run_differential_test_strict(extension_name: &str, entry_file: &str) -> Resul
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn ts_harness_fires_mock_spec_event_sequence() {
+    let ext_path = artifacts_dir().join("input-transform/input-transform.ts");
+    let spec_path = ts_input_transform_event_mock_spec();
+    let result = run_ts_harness_with_mock_spec_result(&ext_path, &spec_path)
+        .unwrap_or_else(|err| unreachable!("TS harness failed: {err}"));
+
+    assert_eq!(
+        result.get("success").and_then(Value::as_bool),
+        Some(true),
+        "TS harness should fail closed only when event dispatch or expectations fail: {result:#}"
+    );
+    assert_eq!(result.get("error"), Some(&Value::Null));
+
+    let capture = result
+        .get("capture")
+        .and_then(Value::as_object)
+        .expect("TS harness output should include capture object");
+    assert!(
+        capture
+            .get("warnings")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty),
+        "implemented event dispatch should not emit the old inert-fire_sequence warning"
+    );
+
+    let events = capture
+        .get("events")
+        .and_then(Value::as_array)
+        .expect("event fire_sequence dispatches should be captured");
+    assert_eq!(events.len(), 1, "expected exactly one fired event");
+    let event = &events[0];
+    assert_eq!(event.get("event").and_then(Value::as_str), Some("input"));
+    assert_eq!(event.get("handler_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        event.get("expected_match").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let response = event
+        .get("response")
+        .and_then(Value::as_object)
+        .expect("single input handler response should be captured as an object");
+    assert_eq!(
+        response.get("action").and_then(Value::as_str),
+        Some("transform")
+    );
+    assert_eq!(
+        response.get("text").and_then(Value::as_str),
+        Some("Respond briefly in 1-2 sentences: What is Rust?")
+    );
+}
 
 #[test]
 fn diff_official_manifest() {

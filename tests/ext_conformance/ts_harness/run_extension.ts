@@ -16,9 +16,15 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+interface EventFire {
+	event?: string;
+	payload?: JsonValue;
+	expected_response?: JsonValue;
+}
 
 interface MockSpec {
 	schema?: string;
@@ -53,7 +59,7 @@ interface MockSpec {
 		dialog_default?: string;
 	};
 	events?: {
-		fire_sequence?: JsonValue[];
+		fire_sequence?: EventFire[];
 	};
 	model?: {
 		current?: { provider?: string; model_id?: string; name?: string };
@@ -88,6 +94,17 @@ interface HttpResponse {
 	body?: string;
 }
 
+interface EventCapture {
+	event: string;
+	payload: JsonValue;
+	handler_count: number;
+	responses: JsonValue[];
+	response: JsonValue;
+	expected_response?: JsonValue;
+	expected_match?: boolean;
+	error?: string;
+}
+
 interface CaptureLog {
 	sendMessage: Array<{ message: JsonValue; options?: JsonValue }>;
 	sendUserMessage: Array<{ content: JsonValue; options?: JsonValue }>;
@@ -100,6 +117,7 @@ interface CaptureLog {
 	exec: Array<{ command: string; args: string[]; cwd: string; matched: boolean } & ExecResult>;
 	http: Array<{ method: string; url: string; matched: boolean; response: HttpResponse }>;
 	ui: Array<{ op: string; payload?: JsonValue; result?: JsonValue }>;
+	events: EventCapture[];
 	warnings: string[];
 }
 
@@ -108,7 +126,6 @@ const __dirname = path.dirname(__filename);
 const PI_MONO_ROOT = path.resolve(__dirname, "../../../legacy_pi_mono_code/pi-mono");
 
 const loaderPath = path.join(PI_MONO_ROOT, "packages/coding-agent/dist/core/extensions/loader.js");
-const { loadExtensions } = await import(loaderPath);
 
 const CAPTURE_LOGS = process.env.PI_TS_CAPTURE_LOGS === "1";
 const FORCE_EXIT = process.env.PI_TS_FORCE_EXIT !== "0";
@@ -224,6 +241,21 @@ function normalizeMockSpec(raw: JsonValue): MockSpec {
 	return raw as MockSpec;
 }
 
+function toJsonValue(value: unknown): JsonValue {
+	if (value === undefined) return null;
+	try {
+		const serialized = JSON.stringify(value);
+		if (serialized === undefined) return null;
+		return JSON.parse(serialized) as JsonValue;
+	} catch {
+		return String(value);
+	}
+}
+
+function jsonEquals(left: unknown, right: unknown): boolean {
+	return JSON.stringify(toJsonValue(left)) === JSON.stringify(toJsonValue(right));
+}
+
 function pickExecRule(rules: ExecRule[] | undefined, command: string, args: string[]): ExecRule | undefined {
 	if (!rules) return undefined;
 	return rules.find((rule) => {
@@ -237,6 +269,172 @@ function pickExecRule(rules: ExecRule[] | undefined, command: string, args: stri
 function pickHttpRule(rules: HttpRule[] | undefined, method: string, url: string): HttpRule | undefined {
 	if (!rules) return undefined;
 	return rules.find((rule) => rule.method.toUpperCase() === method.toUpperCase() && rule.url === url);
+}
+
+function createFallbackRuntime() {
+	const notInitialized = () => {
+		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+	};
+	return {
+		sendMessage: notInitialized,
+		sendUserMessage: notInitialized,
+		appendEntry: notInitialized,
+		setSessionName: notInitialized,
+		getSessionName: notInitialized,
+		setLabel: notInitialized,
+		getActiveTools: notInitialized,
+		getAllTools: notInitialized,
+		setActiveTools: notInitialized,
+		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
+		getThinkingLevel: notInitialized,
+		setThinkingLevel: notInitialized,
+		exec: async () => {
+			throw new Error("Extension runtime not initialized");
+		},
+		flagValues: new Map<string, boolean | string>(),
+		pendingProviderRegistrations: [] as Array<{ name: string; config: { models?: Array<{ id?: string; name?: string }> } }>,
+	};
+}
+
+function createFallbackExtension(extensionPath: string, resolvedPath: string) {
+	return {
+		path: extensionPath,
+		resolvedPath,
+		handlers: new Map<string, Array<(payload: JsonValue, ctx: any) => Promise<unknown> | unknown>>(),
+		tools: new Map<string, { definition: JsonValue; extensionPath: string }>(),
+		messageRenderers: new Map<string, unknown>(),
+		commands: new Map<string, JsonValue>(),
+		flags: new Map<string, JsonValue>(),
+		shortcuts: new Map<string, JsonValue>(),
+	};
+}
+
+function createFallbackApi(extension: ReturnType<typeof createFallbackExtension>, runtime: ReturnType<typeof createFallbackRuntime>, cwd: string) {
+	return {
+		on(event: string, handler: (payload: JsonValue, ctx: any) => Promise<unknown> | unknown) {
+			const list = extension.handlers.get(event) ?? [];
+			list.push(handler);
+			extension.handlers.set(event, list);
+		},
+		registerTool(tool: any) {
+			extension.tools.set(tool.name, {
+				definition: tool,
+				extensionPath: extension.path,
+			});
+		},
+		registerCommand(name: string, options: JsonValue) {
+			extension.commands.set(name, { name, ...(options as any) });
+		},
+		registerShortcut(shortcut: string, options: JsonValue) {
+			extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...(options as any) });
+		},
+		registerFlag(name: string, options: any) {
+			extension.flags.set(name, { name, extensionPath: extension.path, ...options });
+			if (options?.default !== undefined) {
+				runtime.flagValues.set(name, options.default);
+			}
+		},
+		registerMessageRenderer(customType: string, renderer: unknown) {
+			extension.messageRenderers.set(customType, renderer);
+		},
+		getFlag(name: string) {
+			if (!extension.flags.has(name)) return undefined;
+			return runtime.flagValues.get(name);
+		},
+		sendMessage(message: JsonValue, options?: JsonValue) {
+			runtime.sendMessage(message, options);
+		},
+		sendUserMessage(content: JsonValue, options?: JsonValue) {
+			runtime.sendUserMessage(content, options);
+		},
+		appendEntry(customType: string, data?: JsonValue) {
+			runtime.appendEntry(customType, data);
+		},
+		setSessionName(name: string) {
+			runtime.setSessionName(name);
+		},
+		getSessionName() {
+			return runtime.getSessionName();
+		},
+		setLabel(entryId: string, label?: string) {
+			runtime.setLabel(entryId, label);
+		},
+		exec(command: string, args: string[], options?: { cwd?: string }) {
+			return runtime.exec(command, args, options?.cwd ?? cwd);
+		},
+		getActiveTools() {
+			return runtime.getActiveTools();
+		},
+		getAllTools() {
+			return runtime.getAllTools();
+		},
+		setActiveTools(toolNames: string[]) {
+			runtime.setActiveTools(toolNames);
+		},
+		setModel(model: JsonValue) {
+			return runtime.setModel(model);
+		},
+		getThinkingLevel() {
+			return runtime.getThinkingLevel();
+		},
+		setThinkingLevel(level: string) {
+			runtime.setThinkingLevel(level);
+		},
+		registerProvider(name: string, config: { models?: Array<{ id?: string; name?: string }> }) {
+			runtime.pendingProviderRegistrations.push({ name, config });
+		},
+		events: {
+			on() {},
+			emit() {},
+		},
+	};
+}
+
+async function fallbackLoadExtensions(paths: string[], cwd: string) {
+	const extensions = [];
+	const errors = [];
+	const runtime = createFallbackRuntime();
+	for (const extensionPath of paths) {
+		const resolvedPath = path.resolve(cwd, extensionPath);
+		try {
+			const imported = await import(pathToFileURL(resolvedPath).href);
+			const factory = imported.default ?? imported;
+			if (typeof factory !== "function") {
+				errors.push({ path: extensionPath, error: `Extension does not export a valid factory function: ${extensionPath}` });
+				continue;
+			}
+			const extension = createFallbackExtension(extensionPath, resolvedPath);
+			await factory(createFallbackApi(extension, runtime, cwd));
+			extensions.push(extension);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			errors.push({ path: extensionPath, error: `Failed to load extension: ${message}` });
+		}
+	}
+	return { extensions, errors, runtime };
+}
+
+async function resolveLoadExtensions() {
+	try {
+		const imported = await import(loaderPath);
+		return imported.loadExtensions as (paths: string[], cwd: string) => Promise<any>;
+	} catch {
+		return fallbackLoadExtensions;
+	}
+}
+
+function shouldRetryWithFallbackLoader(result: any): boolean {
+	const errors = result?.errors;
+	if (!Array.isArray(errors) || errors.length === 0) return false;
+	return errors.every((entry) => {
+		const message = String(entry?.error ?? "");
+		return (
+			message.includes("Cannot find module '@mariozechner/pi-ai'") ||
+			message.includes("Cannot find module '@mariozechner/pi-tui'") ||
+			message.includes("Cannot find module '@mariozechner/pi-agent-core'") ||
+			message.includes("Cannot find module '@sinclair/typebox'")
+		);
+	});
 }
 
 function installFetchMock(spec: MockSpec, capture: CaptureLog): () => void {
@@ -255,6 +453,150 @@ function installFetchMock(spec: MockSpec, capture: CaptureLog): () => void {
 	return () => {
 		globalThis.fetch = originalFetch;
 	};
+}
+
+function buildEventContext(spec: MockSpec, capture: CaptureLog, cwd: string): any {
+	const choose = (value: unknown, fallback: unknown) => (value === undefined ? fallback : value);
+	const uiResponses = spec.ui?.responses ?? {};
+	const hasUI = Boolean(spec.ui?.capture ?? Object.keys(uiResponses).length > 0);
+	const recordUi = (op: string, payload?: unknown, result?: unknown) => {
+		capture.ui.push({ op, payload: toJsonValue(payload), result: toJsonValue(result) });
+	};
+	const theme = {
+		fg: (_token: string, text: string) => String(text ?? ""),
+		strikethrough: (text: string) => String(text ?? ""),
+	};
+
+	return {
+		hasUI,
+		cwd,
+		ui: {
+			notify: (message: unknown, level?: unknown) => {
+				recordUi("notify", { message, level });
+			},
+			setWidget: (id: unknown, widget: unknown) => {
+				recordUi("setWidget", { id, widget });
+			},
+			setStatus: (status: unknown) => {
+				recordUi("setStatus", { status });
+			},
+			custom: async (name: string, payload?: unknown) => {
+				const result = choose((uiResponses as any)[name], null);
+				recordUi("custom", { name, payload }, result);
+				return result;
+			},
+			select: async (title: string, options: string[]) => {
+				const selected = choose((uiResponses as any).select, options?.[0]);
+				const result = typeof selected === "string" ? selected : options?.[0] ?? "";
+				recordUi("select", { title, options }, result);
+				return result;
+			},
+			confirm: async (title: string) => {
+				const result = Boolean(choose((uiResponses as any).confirm, spec.ui?.confirm_default ?? true));
+				recordUi("confirm", { title }, result);
+				return result;
+			},
+			dialog: async (title: string, defaultValue = "") => {
+				const value = choose((uiResponses as any).dialog, spec.ui?.dialog_default ?? defaultValue);
+				const result = typeof value === "string" ? value : defaultValue;
+				recordUi("dialog", { title, defaultValue }, result);
+				return result;
+			},
+			theme,
+		},
+		modelRegistry: {
+			getApiKeyForProvider: async (provider: string) => {
+				const apiKeys = (spec.model as any)?.api_keys ?? {};
+				const value = apiKeys[provider];
+				return typeof value === "string" ? value : undefined;
+			},
+		},
+		sessionManager: {
+			getState: () => spec.session?.state ?? {},
+			getEntries: () => spec.session?.entries ?? [],
+			getBranch: () => spec.session?.branch ?? [],
+			getLeafEntry: () => {
+				const branch = spec.session?.branch ?? [];
+				if (branch.length > 0) return branch[branch.length - 1];
+				const entries = spec.session?.entries ?? [];
+				return entries.length > 0 ? entries[entries.length - 1] : null;
+			},
+		},
+		getSystemPrompt: () => {
+			const state = spec.session?.state;
+			if (state && typeof state === "object" && !Array.isArray(state)) {
+				const prompt = (state as Record<string, JsonValue>).systemPrompt;
+				return typeof prompt === "string" ? prompt : "";
+			}
+			return "";
+		},
+	};
+}
+
+async function fireEventSequence(
+	ext: { handlers: Map<string, Array<(payload: JsonValue, ctx: any) => Promise<unknown> | unknown>> },
+	spec: MockSpec,
+	capture: CaptureLog,
+	cwd: string,
+): Promise<{ ok: boolean; error: string | null }> {
+	const sequence = spec.events?.fire_sequence ?? [];
+	const errors: string[] = [];
+
+	for (const [index, item] of sequence.entries()) {
+		const eventName = typeof item?.event === "string" ? item.event : "";
+		const payload = toJsonValue(item?.payload ?? {});
+		const eventCapture: EventCapture = {
+			event: eventName,
+			payload,
+			handler_count: 0,
+			responses: [],
+			response: null,
+		};
+
+		if (!eventName) {
+			eventCapture.error = `events.fire_sequence[${index}] missing string event`;
+			capture.events.push(eventCapture);
+			errors.push(eventCapture.error);
+			continue;
+		}
+
+		const handlers = ext.handlers.get(eventName);
+		eventCapture.handler_count = handlers?.length ?? 0;
+		if (!handlers || handlers.length === 0) {
+			eventCapture.error = `no handlers for event '${eventName}'`;
+			capture.events.push(eventCapture);
+			errors.push(`events.fire_sequence[${index}] ${eventCapture.error}`);
+			continue;
+		}
+
+		try {
+			const ctx = buildEventContext(spec, capture, cwd);
+			for (const handler of handlers) {
+				if (typeof handler !== "function") {
+					throw new Error(`event '${eventName}' registered a non-function handler`);
+				}
+				const response = await handler(payload, ctx);
+				eventCapture.responses.push(toJsonValue(response));
+			}
+			eventCapture.response =
+				eventCapture.responses.length === 1 ? eventCapture.responses[0] : eventCapture.responses;
+			if (Object.prototype.hasOwnProperty.call(item, "expected_response")) {
+				eventCapture.expected_response = toJsonValue(item.expected_response);
+				eventCapture.expected_match = jsonEquals(eventCapture.response, item.expected_response);
+				if (!eventCapture.expected_match) {
+					eventCapture.error = `expected_response mismatch for event '${eventName}'`;
+					errors.push(`events.fire_sequence[${index}] ${eventCapture.error}`);
+				}
+			}
+		} catch (err) {
+			eventCapture.error = err instanceof Error ? err.message : String(err);
+			errors.push(`events.fire_sequence[${index}] handler error for '${eventName}': ${eventCapture.error}`);
+		}
+
+		capture.events.push(eventCapture);
+	}
+
+	return errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true, error: null };
 }
 
 async function main() {
@@ -283,6 +625,7 @@ async function main() {
 		exec: [],
 		http: [],
 		ui: [],
+		events: [],
 		warnings: [],
 	};
 
@@ -291,7 +634,11 @@ async function main() {
 	let exitCode = 0;
 	try {
 		const loadStart = Date.now();
-		const result = await loadExtensions([extensionPath], cwd);
+		const loadExtensions = await resolveLoadExtensions();
+		let result = await loadExtensions([extensionPath], cwd);
+		if (shouldRetryWithFallbackLoader(result)) {
+			result = await fallbackLoadExtensions([extensionPath], cwd);
+		}
 		const loadTimeMs = Date.now() - loadStart;
 
 		if (result.errors.length > 0) {
@@ -424,8 +771,9 @@ async function main() {
 			return resultValue;
 		};
 
-		if (spec.events?.fire_sequence?.length) {
-			capture.warnings.push("events.fire_sequence provided but event firing is not implemented in this harness");
+		const eventOutcome = await fireEventSequence(ext, spec, capture, cwd);
+		if (!eventOutcome.ok) {
+			exitCode = 1;
 		}
 
 		const handlers: Record<string, number> = {};
@@ -485,8 +833,8 @@ async function main() {
 		}
 
 		const output = {
-			success: true,
-			error: null,
+			success: eventOutcome.ok,
+			error: eventOutcome.error,
 			load_time_ms: loadTimeMs,
 			spec: {
 				path: mockSpecPath,

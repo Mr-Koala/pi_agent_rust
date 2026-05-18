@@ -1,0 +1,27 @@
+{
+  "schema": "pi.ext.mock_spec.v1",
+  "extension_id": "input-transform",
+  "description": "Fires the input-transform input event through the TS mock-spec harness.",
+  "ui": {
+    "capture": true,
+    "responses": {},
+    "confirm_default": true,
+    "dialog_default": ""
+  },
+  "events": {
+    "fire_sequence": [
+      {
+        "event": "input",
+        "payload": {
+          "text": "?quick What is Rust?",
+          "source": "user",
+          "images": []
+        },
+        "expected_response": {
+          "action": "transform",
+          "text": "Respond briefly in 1-2 sentences: What is Rust?"
+        }
+      }
+    ]
+  }
+}
