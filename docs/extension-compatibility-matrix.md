@@ -119,6 +119,7 @@ for optional features.
 | `dotenv` | Functional | `config(opts)`, `parse(src)` |
 | `ms` | Functional | Duration parsing (`ms("2h")` -> `7200000`) |
 | `glob` | Partial | `globSync`, `glob`, `Glob` class (basic `*`, `?`, `**` over VFS-known files) |
+| `jsonwebtoken` | Partial | `decode()`, HS256/HS384/HS512 `sign()`/`verify()`; asymmetric algorithms fail closed |
 
 ### No-op Stubs (Extension Loads, Feature Unavailable)
 
@@ -129,7 +130,6 @@ for optional features.
 | `jsdom` | `JSDOM` class (empty) | DOM not available |
 | `turndown` | `TurndownService` (passthrough) | HTML-to-markdown not available |
 | `node-pty` | `spawn()` returns no-op | PTY not available in sandbox |
-| `jsonwebtoken` | `sign()`, `verify()`, `decode()` | Crypto-dependent, returns stubs |
 | `@opentelemetry/*` | No-op spans/metrics | Telemetry not collected |
 | `@xterm/*` | No-op terminal | Terminal emulation not available |
 | `vscode-languageserver-protocol` | Type constants only | LSP types for compatibility |

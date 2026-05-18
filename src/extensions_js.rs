@@ -9019,16 +9019,210 @@ export const parse = parseMs;
     modules.insert(
         "jsonwebtoken".to_string(),
         r#"
-export function sign() {
-  throw new Error("jsonwebtoken.sign is not available in PiJS");
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const ALG_TO_DIGEST = {
+  HS256: "sha256",
+  HS384: "sha384",
+  HS512: "sha512",
+};
+
+function assertAllowedOptions(options, allowed, apiName) {
+  if (options === undefined || options === null) return {};
+  if (typeof options !== "object" || Array.isArray(options)) {
+    throw new Error(`${apiName}: options must be an object`);
+  }
+  for (const key of Object.keys(options)) {
+    if (!allowed.includes(key)) {
+      throw new Error(`${apiName}: unsupported option '${key}'`);
+    }
+  }
+  return options;
 }
 
-export function verify() {
-  throw new Error("jsonwebtoken.verify is not available in PiJS");
+function normalizeAlgorithm(algorithm) {
+  const alg = String(algorithm || "HS256").toUpperCase();
+  if (!ALG_TO_DIGEST[alg]) {
+    throw new Error(`jsonwebtoken: unsupported algorithm '${alg}'`);
+  }
+  return alg;
 }
 
-export function decode() {
-  return null;
+function assertHmacKey(key) {
+  if (typeof key === "string") return key;
+  if (key instanceof ArrayBuffer) return new Uint8Array(key);
+  if (ArrayBuffer.isView && ArrayBuffer.isView(key)) return key;
+  if (Array.isArray(key)) return new Uint8Array(key);
+  throw new Error("jsonwebtoken: HS* secret must be a string or byte buffer");
+}
+
+function base64UrlFromText(text) {
+  const bytes = new TextEncoder().encode(String(text));
+  return base64UrlFromBytes(bytes);
+}
+
+function base64UrlFromBytes(bytes) {
+  let binary = "";
+  let chunk = [];
+  for (let i = 0; i < bytes.length; i++) {
+    chunk.push(bytes[i]);
+    if (chunk.length >= 4096) {
+      binary += String.fromCharCode.apply(null, chunk);
+      chunk.length = 0;
+    }
+  }
+  if (chunk.length > 0) {
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return globalThis.btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function base64UrlToBytes(text) {
+  let normalized = String(text).replace(/-/g, "+").replace(/_/g, "/");
+  while (normalized.length % 4 !== 0) normalized += "=";
+  const binary = globalThis.atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function base64UrlToText(text) {
+  return new TextDecoder().decode(base64UrlToBytes(text));
+}
+
+function parseJsonSegment(segment) {
+  try {
+    return JSON.parse(base64UrlToText(segment));
+  } catch (_e) {
+    return null;
+  }
+}
+
+function tokenParts(token) {
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) return null;
+  return parts;
+}
+
+function signatureFor(algorithm, key, signingInput) {
+  return createHmac(ALG_TO_DIGEST[algorithm], assertHmacKey(key))
+    .update(signingInput)
+    .digest("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function secureEqualString(left, right) {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  if (leftBytes.length !== rightBytes.length) return false;
+  return timingSafeEqual(leftBytes, rightBytes);
+}
+
+function encodePayload(payload, options) {
+  if (payload === undefined) {
+    throw new Error("jsonwebtoken.sign: payload is required");
+  }
+  if (typeof payload === "string") {
+    return base64UrlFromText(payload);
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("jsonwebtoken.sign: payload must be an object or string");
+  }
+  const body = options.mutatePayload ? payload : Object.assign({}, payload);
+  if (options.noTimestamp !== true && body.iat === undefined) {
+    body.iat = Math.floor(Date.now() / 1000);
+  }
+  return base64UrlFromText(JSON.stringify(body));
+}
+
+export function sign(payload, secretOrPrivateKey, options) {
+  const opts = assertAllowedOptions(
+    options,
+    ["algorithm", "header", "noTimestamp", "mutatePayload"],
+    "jsonwebtoken.sign",
+  );
+  const alg = normalizeAlgorithm(opts.algorithm);
+  const header = Object.assign({ alg, typ: "JWT" }, opts.header || {});
+  header.alg = alg;
+  const encodedHeader = base64UrlFromText(JSON.stringify(header));
+  const encodedPayload = encodePayload(payload, opts);
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const signature = signatureFor(alg, secretOrPrivateKey, signingInput);
+  return `${signingInput}.${signature}`;
+}
+
+function assertTemporalClaims(payload, options) {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return;
+  const now = options.clockTimestamp === undefined
+    ? Math.floor(Date.now() / 1000)
+    : Number(options.clockTimestamp);
+  if (!Number.isFinite(now)) {
+    throw new Error("jsonwebtoken.verify: clockTimestamp must be numeric");
+  }
+  if (payload.nbf !== undefined && options.ignoreNotBefore !== true && now < Number(payload.nbf)) {
+    throw new Error("jwt not active");
+  }
+  if (payload.exp !== undefined && options.ignoreExpiration !== true && now >= Number(payload.exp)) {
+    throw new Error("jwt expired");
+  }
+}
+
+export function verify(token, secretOrPublicKey, options) {
+  const opts = assertAllowedOptions(
+    options,
+    ["algorithms", "clockTimestamp", "ignoreExpiration", "ignoreNotBefore", "complete"],
+    "jsonwebtoken.verify",
+  );
+  const parts = tokenParts(token);
+  if (!parts) throw new Error("jwt malformed");
+  const header = parseJsonSegment(parts[0]);
+  const payload = parseJsonSegment(parts[1]);
+  if (!header || !header.alg) throw new Error("invalid token");
+  const alg = normalizeAlgorithm(header.alg);
+  if (opts.algorithms !== undefined) {
+    if (!Array.isArray(opts.algorithms)) {
+      throw new Error("jsonwebtoken.verify: algorithms must be an array");
+    }
+    if (!opts.algorithms.map((item) => String(item).toUpperCase()).includes(alg)) {
+      throw new Error("invalid algorithm");
+    }
+  }
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const expected = signatureFor(alg, secretOrPublicKey, signingInput);
+  if (!secureEqualString(expected, parts[2])) {
+    throw new Error("invalid signature");
+  }
+  assertTemporalClaims(payload, opts);
+  if (opts.complete === true) {
+    return { header, payload, signature: parts[2] };
+  }
+  return payload;
+}
+
+export function decode(token, options) {
+  const opts = assertAllowedOptions(options, ["complete", "json"], "jsonwebtoken.decode");
+  const parts = tokenParts(token);
+  if (!parts) return null;
+  const header = parseJsonSegment(parts[0]);
+  const payloadText = (() => {
+    try { return base64UrlToText(parts[1]); } catch (_e) { return null; }
+  })();
+  if (payloadText === null) return null;
+  let payload = null;
+  try {
+    payload = JSON.parse(payloadText);
+  } catch (_e) {
+    payload = opts.json === true ? null : payloadText;
+  }
+  if (opts.complete === true) {
+    return { header, payload, signature: parts[2] };
+  }
+  return payload;
 }
 
 export default { sign, verify, decode };

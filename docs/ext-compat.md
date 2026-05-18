@@ -121,13 +121,17 @@ without runtime errors, even when the real package is not installed.
 |---------|-------------|
 | `@modelcontextprotocol/sdk/*` | MCP client/server/transport types |
 | `vscode-languageserver-protocol/*` | LSP types and protocol definitions |
-| `jsonwebtoken` | `sign`, `verify`, `decode` |
+| `jsonwebtoken` | `decode`, HS256/HS384/HS512 `sign`/`verify` |
 | `uuid` | `v4`, `v5`, `v7`, `NIL` |
 | `dotenv` | `config`, `parse` |
 | `shell-quote` | `parse`, `quote` |
 | `ms` | Duration parsing |
 | `diff` | `diffChars`, `diffLines`, `createPatch` |
 | `glob` | `glob`, `globSync` |
+
+`jsonwebtoken` support is intentionally bounded to HMAC JWTs. RSA/ECDSA
+algorithms and unsupported verification options fail closed with explicit
+diagnostics instead of silently accepting tokens.
 
 ### Runtime API Compatibility Modules
 

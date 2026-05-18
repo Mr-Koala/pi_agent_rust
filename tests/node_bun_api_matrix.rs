@@ -481,42 +481,95 @@ fn jsonwebtoken_import() {
 }
 
 #[test]
-fn jsonwebtoken_sign_throws() {
+fn jsonwebtoken_sign_hs256_vector() {
     let result = eval_ext(
         r#"import { sign } from "jsonwebtoken";"#,
-        r#"(() => {
-            try { sign({}, "secret"); return "no_error"; }
-            catch (e) { return e.message; }
-        })()"#,
+        r#"sign({ sub: "123", scope: "read" }, "secret", { noTimestamp: true })"#,
     );
-    assert!(
-        result.contains("not available"),
-        "sign should throw, got: {result}"
+    assert_eq!(
+        result,
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJzY29wZSI6InJlYWQifQ.PZ1gwY65LX9L5LRMcJkeJiCzoReE1wxCTzGgvjureBE"
     );
 }
 
 #[test]
-fn jsonwebtoken_verify_throws() {
+fn jsonwebtoken_sign_hs512_vector() {
+    let result = eval_ext(
+        r#"import { sign } from "jsonwebtoken";"#,
+        r#"sign({ sub: "123", scope: "read" }, "secret", { algorithm: "HS512", noTimestamp: true })"#,
+    );
+    assert_eq!(
+        result,
+        "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJzY29wZSI6InJlYWQifQ.LQ6VLcpkcUQxN5bmz11uXKo2x0r0ffyPBci2g3i6FcI-a93bdl2znPT4fOtdJMPoFyR6705bxGxNWYztpi6MIw"
+    );
+}
+
+#[test]
+fn jsonwebtoken_sign_hs384_vector() {
+    let result = eval_ext(
+        r#"import { sign } from "jsonwebtoken";"#,
+        r#"sign({ sub: "123", scope: "read" }, "secret", { algorithm: "HS384", noTimestamp: true })"#,
+    );
+    assert_eq!(
+        result,
+        "eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJzY29wZSI6InJlYWQifQ.Ta4XxZoNTRct5mFVm_oveQPAilDG9P-k1lQ6ad2naa55u_zp1pgYrDZKWuPK_vFk"
+    );
+}
+
+#[test]
+fn jsonwebtoken_verify_hs256_roundtrip() {
+    let result = eval_ext(
+        r#"import { verify } from "jsonwebtoken";"#,
+        r#"verify("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJzY29wZSI6InJlYWQifQ.PZ1gwY65LX9L5LRMcJkeJiCzoReE1wxCTzGgvjureBE", "secret").scope"#,
+    );
+    assert_eq!(result, "read");
+}
+
+#[test]
+fn jsonwebtoken_verify_rejects_bad_signature() {
     let result = eval_ext(
         r#"import { verify } from "jsonwebtoken";"#,
         r#"(() => {
-            try { verify("token", "secret"); return "no_error"; }
-            catch (e) { return e.message; }
+            try {
+                verify("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJzY29wZSI6InJlYWQifQ.PZ1gwY65LX9L5LRMcJkeJiCzoReE1wxCTzGgvjureBE", "wrong");
+                return "no_error";
+            } catch (e) {
+                return e.message;
+            }
         })()"#,
     );
-    assert!(
-        result.contains("not available"),
-        "verify should throw, got: {result}"
-    );
+    assert_eq!(result, "invalid signature");
 }
 
 #[test]
-fn jsonwebtoken_decode_returns_null() {
+fn jsonwebtoken_decode_returns_payload() {
     let result = eval_ext(
         r#"import { decode } from "jsonwebtoken";"#,
-        r#"String(decode("fake.token.here"))"#,
+        r#"(() => {
+            const payload = decode("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJzY29wZSI6InJlYWQifQ.PZ1gwY65LX9L5LRMcJkeJiCzoReE1wxCTzGgvjureBE");
+            return payload.sub + ":" + payload.scope;
+        })()"#,
     );
-    assert_eq!(result, "null");
+    assert_eq!(result, "123:read");
+}
+
+#[test]
+fn jsonwebtoken_rejects_unsupported_algorithm() {
+    let result = eval_ext(
+        r#"import { sign } from "jsonwebtoken";"#,
+        r#"(() => {
+            try {
+                sign({ sub: "123" }, "secret", { algorithm: "RS256" });
+                return "no_error";
+            } catch (e) {
+                return e.message;
+            }
+        })()"#,
+    );
+    assert!(
+        result.contains("unsupported algorithm 'RS256'"),
+        "unsupported algorithm should fail closed, got: {result}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

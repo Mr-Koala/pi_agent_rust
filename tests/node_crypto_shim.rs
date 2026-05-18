@@ -158,7 +158,16 @@ fn md5_hello_hex() {
     assert_eq!(result, "5d41402abc4b2a76b9719d911017c592");
 }
 
-// ─── SHA-512 Test ───────────────────────────────────────────────────────────
+// ─── SHA-384/SHA-512 Tests ─────────────────────────────────────────────────
+
+#[test]
+fn sha384_hello_hex() {
+    let result = eval_crypto(r#"createHash("sha384").update("hello").digest("hex")"#);
+    assert_eq!(
+        result,
+        "59e1748777448c69de6b800d7a33bbfb9ff1b463e44354c3553bcdb9c666fa90125a3c79f90397bdf5f6a13de828684f"
+    );
+}
 
 #[test]
 fn sha512_hello_hex() {
@@ -177,6 +186,15 @@ fn hmac_sha256_hex() {
     assert_eq!(
         result,
         "88aab3ede8d3adf94d26ab90d3bafd4a2083070c3bcce9c014ee04a443847c0b"
+    );
+}
+
+#[test]
+fn hmac_sha384_hex() {
+    let result = eval_crypto(r#"createHmac("sha384", "secret").update("hello").digest("hex")"#);
+    assert_eq!(
+        result,
+        "7e1e620ca0068fd1fce00c1ad3f5c6dbb12874dd2fb9c26502d09d0d804f2c0ba1d921b9458416cba480417571001e18"
     );
 }
 
@@ -342,6 +360,7 @@ fn get_hashes_includes_standard() {
     let result = eval_crypto("JSON.stringify(getHashes().sort())");
     let hashes: Vec<String> = serde_json::from_str(&result).expect("parse JSON");
     assert!(hashes.contains(&"sha256".to_string()));
+    assert!(hashes.contains(&"sha384".to_string()));
     assert!(hashes.contains(&"sha1".to_string()));
     assert!(hashes.contains(&"md5".to_string()));
     assert!(hashes.contains(&"sha512".to_string()));

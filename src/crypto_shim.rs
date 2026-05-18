@@ -1,13 +1,13 @@
 //! Node.js `crypto` shim — Rust hostcalls for the QuickJS extension runtime.
 //!
 //! Registers native functions on the QuickJS global object that provide real
-//! cryptographic operations (SHA-256, SHA-512, SHA-1, MD5, HMAC, random bytes,
+//! cryptographic operations (SHA-256, SHA-384, SHA-512, SHA-1, MD5, HMAC, random bytes,
 //! UUID generation, constant-time comparison) to the `node:crypto` JS module.
 
 use pbkdf2::pbkdf2_hmac;
 use rquickjs::prelude::Func;
 use scrypt::{Params as ScryptParams, scrypt};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha384};
 use uuid::Builder;
 
 const KDF_MAX_OUTPUT_BYTES: usize = 1_048_576; // 1MB
@@ -52,6 +52,11 @@ fn register_hash_hostcall(global: &rquickjs::Object<'_>) -> rquickjs::Result<()>
                     }
                     "sha512" => {
                         let mut h = sha2::Sha512::new();
+                        h.update(bytes);
+                        h.finalize().to_vec()
+                    }
+                    "sha384" => {
+                        let mut h = Sha384::new();
                         h.update(bytes);
                         h.finalize().to_vec()
                     }
@@ -107,6 +112,14 @@ fn register_hmac_hostcall(global: &rquickjs::Object<'_>) -> rquickjs::Result<()>
                     "sha512" => {
                         let mut mac = hmac::Hmac::<sha2::Sha512>::new_from_slice(key_bytes)
                             .map_err(|_| {
+                                rquickjs::Error::new_from_js("key", "invalid HMAC key length")
+                            })?;
+                        mac.update(data_bytes);
+                        mac.finalize().into_bytes().to_vec()
+                    }
+                    "sha384" => {
+                        let mut mac =
+                            hmac::Hmac::<Sha384>::new_from_slice(key_bytes).map_err(|_| {
                                 rquickjs::Error::new_from_js("key", "invalid HMAC key length")
                             })?;
                         mac.update(data_bytes);
@@ -664,7 +677,7 @@ export function timingSafeEqual(a, b) {
 
 
 export function getHashes() {
-  return ['md5', 'sha1', 'sha256', 'sha512'];
+  return ['md5', 'sha1', 'sha256', 'sha384', 'sha512'];
 }
 
 export function pbkdf2Sync(password, salt, iterations, keylen, digest) {
