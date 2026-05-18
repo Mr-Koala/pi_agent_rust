@@ -187,17 +187,17 @@
       "critical_failures": [],
       "effective_cpu_cores": 8.0,
       "effective_memory_bytes": 34359738368.0,
-      "generated_at": "2026-05-09T09:00:00+00:00",
+      "generated_at": "[TIMESTAMP]",
       "headroom_paths": {
         "CARGO_TARGET_DIR": {
           "available_kb": 52428800,
-          "path": "/data/tmp/pi_agent_rust_cargo/test/target",
+          "path": "[PI_AGENT_CARGO_TMP]/test/target",
           "problem": null,
           "ready": true
         },
         "TMPDIR": {
           "available_kb": 52428800,
-          "path": "/data/tmp/pi_agent_rust_cargo/test/tmp",
+          "path": "[PI_AGENT_CARGO_TMP]/test/tmp",
           "problem": null,
           "ready": true
         }
@@ -215,28 +215,28 @@
       "active_agents": 1,
       "active_builds": 8,
       "active_reservations": 1,
-      "cargo_target_dir": "/data/tmp/pi_agent_rust_cargo/test/target",
+      "cargo_target_dir": "[PI_AGENT_CARGO_TMP]/test/target",
       "queue_depth": 4,
       "queue_recommended_action": "backoff",
       "queued_builds": 4,
       "slot_pressure": "saturated",
-      "tmpdir": "/data/tmp/pi_agent_rust_cargo/test/tmp"
+      "tmpdir": "[PI_AGENT_CARGO_TMP]/test/tmp"
     },
     "current_profile": {
       "critical_failures": [],
       "effective_cpu_cores": 8.0,
       "effective_memory_bytes": 34359738368.0,
-      "generated_at": "2026-05-09T09:00:00+00:00",
+      "generated_at": "[TIMESTAMP]",
       "headroom_paths": {
         "CARGO_TARGET_DIR": {
           "available_kb": 52428800,
-          "path": "/data/tmp/pi_agent_rust_cargo/test/target",
+          "path": "[PI_AGENT_CARGO_TMP]/test/target",
           "problem": null,
           "ready": true
         },
         "TMPDIR": {
           "available_kb": 52428800,
-          "path": "/data/tmp/pi_agent_rust_cargo/test/tmp",
+          "path": "[PI_AGENT_CARGO_TMP]/test/tmp",
           "problem": null,
           "ready": true
         }
@@ -425,7 +425,7 @@
     "automatic commit",
     "automatic file reservation"
   ],
-  "generated_at": "2026-05-09T09:00:00+00:00",
+  "generated_at": "[TIMESTAMP]",
   "input_pack_schema": "pi.swarm.autopilot_input_pack.v1",
   "input_pack_status": "degraded",
   "omitted_actions": [

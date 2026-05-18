@@ -72,7 +72,7 @@
           "priority": 99,
           "status": "in_progress",
           "title": "Stale fixture",
-          "updated_at": "2026-05-08T00:00:00+00:00"
+          "updated_at": "[TIMESTAMP]"
         }
       ],
       "in_progress_count": 1,
@@ -104,7 +104,7 @@
         "priority": 99,
         "status": "in_progress",
         "title": "Stale fixture",
-        "updated_at": "2026-05-08T00:00:00+00:00"
+        "updated_at": "[TIMESTAMP]"
       }
     ],
     "deferred_planning": [],
@@ -118,7 +118,7 @@
         "priority": 99,
         "status": "open",
         "title": "Open fixture",
-        "updated_at": "2026-05-09T09:00:00+00:00"
+        "updated_at": "[TIMESTAMP]"
       }
     ],
     "stale": [
@@ -128,7 +128,7 @@
         "id": "bd-stale",
         "status": "in_progress",
         "title": "Stale fixture",
-        "updated_at": "2026-05-08T00:00:00+00:00"
+        "updated_at": "[TIMESTAMP]"
       }
     ],
     "stale_after_hours": 24,
@@ -184,7 +184,7 @@
         "surface": "cgroup_numa_context"
       }
     ],
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "historical_snapshots": [],
     "input_classification": [
       {
@@ -235,7 +235,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.operator_tail_latency.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "classification": "fresh",
@@ -245,7 +245,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.swarm.flight_recorder.report.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "classification": "fresh",
@@ -255,7 +255,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.doctor.swarm_resource_preflight.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "classification": "fresh",
@@ -265,7 +265,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.ext.hostcall_admission_swarm_profile.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "classification": "fresh",
@@ -275,7 +275,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.session_store_v2.recovery_swarm_profile.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "classification": "fresh",
@@ -285,7 +285,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.rpc.concurrent_swarm_e2e.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "classification": "fresh",
@@ -295,7 +295,7 @@
         "role": "optional_diagnostic",
         "schema": "pi.rch.artifact_sync_preflight.v1",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       }
     ],
     "missing_optional_diagnostics": [],
@@ -511,7 +511,7 @@
         "status": "ok"
       }
     ],
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "generated_source_paths": {
       "agent_mail_reservations": "[WORKSPACE]/agent-mail-reservations.json",
       "agent_mail_status": "[WORKSPACE]/agent-mail-status.json",
@@ -528,9 +528,9 @@
         "bead_id": "bd-fixture",
         "id": "active_target",
         "kind": "cargo_target_dir",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": "Codex",
-        "path": "/data/tmp/pi_agent_rust_cargo/test/target",
+        "path": "[PI_AGENT_CARGO_TMP]/test/target",
         "reason": "active cargo_headroom target dir",
         "state": "active"
       },
@@ -538,7 +538,7 @@
         "bead_id": "bd-fixture",
         "id": "clean_worktree_validation",
         "kind": "clean_worktree_validation_dir",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": "Codex",
         "path": "[WORKSPACE]/clean-worktree-validation",
         "reason": "clean-worktree validation fixture retained for audit",
@@ -548,17 +548,17 @@
         "bead_id": "bd-fixture",
         "id": "ubs_shadow_workspace",
         "kind": "ubs_shadow_workspace",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": "Codex",
-        "path": "/data/tmp/tmp.ubs/git_scan",
+        "path": "[DATA_TMP]/tmp.ubs/git_scan",
         "reason": "UBS staged shadow workspace fixture",
         "state": "retained"
       },
       {
         "id": "stale_unknown_target",
         "kind": "cargo_target_dir",
-        "last_observed_at": "2026-05-01T00:00:00+00:00",
-        "path": "/data/tmp/pi_agent_rust_cargo/unknown/stale-target",
+        "last_observed_at": "[TIMESTAMP]",
+        "path": "[PI_AGENT_CARGO_TMP]/unknown/stale-target",
         "reason": "stale unknown-owner fixture",
         "state": "stale_candidate"
       }
@@ -739,7 +739,7 @@
           "progress": {
             "confidence": 0.64,
             "contract_version": "1.0.0",
-            "generated_at": "2026-05-09T09:00:00+00:00",
+            "generated_at": "[TIMESTAMP]",
             "next_actions": [
               "Back off heavy cargo validation until RCH pressure clears"
             ],
@@ -752,8 +752,8 @@
             "time_window": {
               "comparison_baseline": "HEAD~1",
               "duration_seconds": 3600,
-              "end_utc": "2026-05-09T09:00:00+00:00",
-              "start_utc": "2026-05-09T08:00:00+00:00"
+              "end_utc": "[TIMESTAMP]",
+              "start_utc": "[TIMESTAMP]"
             }
           },
           "redaction_summary": {
@@ -793,7 +793,7 @@
       "degraded_reasons": [],
       "detail": "status=build_saturated, confidence=0.640, reasons=PROGRESS-SLO-RCH-SATURATED",
       "doctor_schema": "pi.doctor.swarm_progress_slo_posture.v1",
-      "generated_at": "2026-05-09T09:00:00+00:00",
+      "generated_at": "[TIMESTAMP]",
       "guards": {
         "advisory_only": true,
         "does_not_replace_beads_agent_mail_rch_validation_broker_doctor_runpacks_context_or_ci": true,
@@ -859,12 +859,12 @@
     },
     "status": "ok"
   },
-  "generated_at": "2026-05-09T09:00:00+00:00",
+  "generated_at": "[TIMESTAMP]",
   "git_state": {
     "branch": "main",
     "change_count": 2,
     "dirty": true,
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "head": "abc123fixture",
     "porcelain_lines": [
       " M src/doctor.rs",
@@ -906,7 +906,7 @@
     "Account for dirty files before using the runpack as handoff evidence",
     "Review temp artifact inventory; do not delete unknown-owner or candidate paths without explicit written approval",
     "Treat Agent Mail read state as unavailable and fall back to Beads ownership evidence",
-    "Use Beads active ownership from `br list --status=in_progress --json` as the soft-lock source (bd-stale assigned to GreenStone, updated 2026-05-08T00:00:00+00:00)",
+    "Use Beads active ownership from `br list --status=in_progress --json` as the soft-lock source (bd-stale assigned to GreenStone, updated [TIMESTAMP])",
     "Attempt Agent Mail registration/inbox/reservation and capture the exact health error.",
     "Use the Beads assignee/status as the soft lock; do not require Agent Mail reservations before coding while Mail is unavailable.",
     "Close finished work with `br close <issue-id> --reason \"...\"` and `br sync --flush-only`.",
@@ -917,7 +917,7 @@
     "Review progress SLO `build_saturated` before launching more swarm work"
   ],
   "predictive_telemetry_ledger": {
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "guards": {
       "advisory_only": true,
       "does_not_replace_source_evidence": true,
@@ -1025,7 +1025,7 @@
             "schema": "pi.cargo_headroom.admission.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1034,7 +1034,7 @@
             "schema": "pi.rch.artifact_sync_preflight.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           }
         ],
         "status": "pressured"
@@ -1068,7 +1068,7 @@
             "schema": null,
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1077,7 +1077,7 @@
             "schema": "pi.swarm.smoke_harness.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1086,7 +1086,7 @@
             "schema": null,
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           }
         ],
         "status": "blocked"
@@ -1119,7 +1119,7 @@
             "schema": null,
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           }
         ],
         "status": "blocked"
@@ -1153,7 +1153,7 @@
             "schema": "pi.swarm.smoke_harness.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1162,7 +1162,7 @@
             "schema": "pi.operator_tail_latency.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1171,7 +1171,7 @@
             "schema": "pi.swarm.flight_recorder.report.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1180,7 +1180,7 @@
             "schema": "pi.session_store_v2.recovery_swarm_profile.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           }
         ],
         "status": "blocked"
@@ -1213,7 +1213,7 @@
             "schema": null,
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1222,7 +1222,7 @@
             "schema": "pi.swarm.smoke_harness.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1231,7 +1231,7 @@
             "schema": "pi.swarm.activity_digest.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1240,7 +1240,7 @@
             "schema": "pi.cargo_headroom.admission.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1249,7 +1249,7 @@
             "schema": "pi.operator_tail_latency.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1258,7 +1258,7 @@
             "schema": "pi.swarm.flight_recorder.report.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1267,7 +1267,7 @@
             "schema": "pi.doctor.swarm_resource_preflight.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1276,7 +1276,7 @@
             "schema": "pi.ext.hostcall_admission_swarm_profile.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1285,7 +1285,7 @@
             "schema": "pi.session_store_v2.recovery_swarm_profile.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1294,7 +1294,7 @@
             "schema": "pi.rpc.concurrent_swarm_e2e.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "current",
@@ -1303,7 +1303,7 @@
             "schema": "pi.rch.artifact_sync_preflight.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           }
         ],
         "status": "pressured"
@@ -1337,7 +1337,7 @@
             "schema": "pi.swarm.claim_readiness_report.v1",
             "sha256": "[SHA256]",
             "status": "ok",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           },
           {
             "freshness": "missing",
@@ -1346,7 +1346,7 @@
             "schema": null,
             "sha256": null,
             "status": "not_provided",
-            "timestamp": "2026-05-09T09:00:00+00:00"
+            "timestamp": "[TIMESTAMP]"
           }
         ],
         "status": "ok"
@@ -1449,7 +1449,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "fresh",
@@ -1461,7 +1461,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "fresh",
@@ -1473,7 +1473,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "fresh",
@@ -1485,7 +1485,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "fresh",
@@ -1497,7 +1497,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "fresh",
@@ -1509,7 +1509,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "fresh",
@@ -1521,7 +1521,7 @@
         "sha256": "[SHA256]",
         "size_bytes": "[SIZE_BYTES]",
         "status": "ok",
-        "timestamp": "2026-05-09T09:00:00+00:00"
+        "timestamp": "[TIMESTAMP]"
       },
       {
         "freshness_classification": "unclassified",
@@ -1556,7 +1556,7 @@
   "progress_slo": {
     "confidence": 0.64,
     "contract_version": "1.0.0",
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "guards": {
       "advisory_only": true,
       "does_not_replace_beads_agent_mail_rch_validation_broker_doctor_runpacks_context_or_ci": true,
@@ -1613,14 +1613,14 @@
     "time_window": {
       "comparison_baseline": "HEAD~1",
       "duration_seconds": 3600,
-      "end_utc": "2026-05-09T09:00:00+00:00",
-      "start_utc": "2026-05-09T08:00:00+00:00"
+      "end_utc": "[TIMESTAMP]",
+      "start_utc": "[TIMESTAMP]"
     }
   },
   "purpose": "operator_handoff_not_release_performance_claim",
   "rch_admission": {
     "allow_local_fallback": false,
-    "cargo_target_dir": "/data/tmp/pi_agent_rust_cargo/test/target",
+    "cargo_target_dir": "[PI_AGENT_CARGO_TMP]/test/target",
     "command_class": "heavy",
     "decision": "backoff",
     "queue_forecast": {
@@ -1642,7 +1642,7 @@
     "resolved_runner": "none",
     "status": "ok",
     "storage_remediation": null,
-    "tmpdir": "/data/tmp/pi_agent_rust_cargo/test/tmp"
+    "tmpdir": "[PI_AGENT_CARGO_TMP]/test/tmp"
   },
   "redaction_summary": {
     "fields": [
@@ -1674,8 +1674,8 @@
             "check",
             "--all-targets"
           ],
-          "command_fingerprint": "sha256:a9e5cc4af1a4dae98fa5355ba9c19edd6fc65b0d22fa8ad25d5db20a46547ee1",
-          "cwd": "/data/projects/pi_agent_rust",
+          "command_fingerprint": "sha256:[SHA256]",
+          "cwd": "[PROJECT_ROOT]",
           "env_allowlist": [
             "CARGO_TARGET_DIR",
             "TMPDIR"
@@ -1733,10 +1733,10 @@
         },
         "paths": {
           "artifact_paths": [],
-          "cargo_target_dir": "/data/tmp/pi_agent_rust_cargo/test/target",
+          "cargo_target_dir": "[PI_AGENT_CARGO_TMP]/test/target",
           "remote_target_dir": null,
           "remote_tmpdir": null,
-          "tmpdir": "/data/tmp/pi_agent_rust_cargo/test/tmp"
+          "tmpdir": "[PI_AGENT_CARGO_TMP]/test/tmp"
         },
         "runner": {
           "command_rewrite": {},
@@ -1755,11 +1755,11 @@
         },
         "schema": "pi.remote_validation.proof_entry.v1",
         "timing": {
-          "duration_ms": 0,
-          "ended_at_utc": "2026-05-09T09:00:00Z",
-          "heartbeat_at_utc": "2026-05-09T09:00:00Z",
+          "duration_ms": "[DURATION]",
+          "ended_at_utc": "[TIMESTAMP]",
+          "heartbeat_at_utc": "[TIMESTAMP]",
           "stale_progress_detected": false,
-          "started_at_utc": "2026-05-09T09:00:00Z"
+          "started_at_utc": "[TIMESTAMP]"
         },
         "warnings": [
           {
@@ -1779,7 +1779,7 @@
         ]
       }
     ],
-    "generated_at_utc": "2026-05-09T09:00:00Z",
+    "generated_at_utc": "[TIMESTAMP]",
     "git": {
       "branch": "main",
       "dirty_paths": [
@@ -1808,7 +1808,7 @@
       "passing_entries": 0
     },
     "worktree": {
-      "cwd": "/data/projects/pi_agent_rust",
+      "cwd": "[PROJECT_ROOT]",
       "dirty_policy": "reported_in_runpack"
     }
   },
@@ -1834,11 +1834,11 @@
       "purpose": "Check Beads/drop-in ledger invariant"
     },
     {
-      "command": "CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp rch exec -- cargo check --all-targets",
+      "command": "CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp rch exec -- cargo check --all-targets",
       "purpose": "Run compiler check through RCH"
     },
     {
-      "command": "CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp rch exec -- cargo clippy --all-targets -- -D warnings",
+      "command": "CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp rch exec -- cargo clippy --all-targets -- -D warnings",
       "purpose": "Run clippy through RCH"
     }
   ],
@@ -2233,7 +2233,7 @@
     "total_score": 8
   },
   "tail_latency": {
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "metrics": [
       {
         "count": 3,
@@ -2279,14 +2279,14 @@
         ],
         "id": "temp-f9e45eecd2ce",
         "kind": "cargo_target_dir",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": "Codex",
-        "path": "/data/tmp/pi_agent_rust_cargo/test/target",
+        "path": "[PI_AGENT_CARGO_TMP]/test/target",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
         "reason": "cargo_headroom selected target directory",
         "review_commands": [
-          "test -e /data/tmp/pi_agent_rust_cargo/test/target && stat /data/tmp/pi_agent_rust_cargo/test/target",
-          "du -sh /data/tmp/pi_agent_rust_cargo/test/target"
+          "test -e [PI_AGENT_CARGO_TMP]/test/target && stat [PI_AGENT_CARGO_TMP]/test/target",
+          "du -sh [PI_AGENT_CARGO_TMP]/test/target"
         ],
         "source": "cargo_admission",
         "state": "active"
@@ -2300,14 +2300,14 @@
         ],
         "id": "temp-fee35bf4431c",
         "kind": "cargo_tmpdir",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": null,
-        "path": "/data/tmp/pi_agent_rust_cargo/test/tmp",
+        "path": "[PI_AGENT_CARGO_TMP]/test/tmp",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
         "reason": "cargo_headroom selected TMPDIR",
         "review_commands": [
-          "test -e /data/tmp/pi_agent_rust_cargo/test/tmp && stat /data/tmp/pi_agent_rust_cargo/test/tmp",
-          "du -sh /data/tmp/pi_agent_rust_cargo/test/tmp"
+          "test -e [PI_AGENT_CARGO_TMP]/test/tmp && stat [PI_AGENT_CARGO_TMP]/test/tmp",
+          "du -sh [PI_AGENT_CARGO_TMP]/test/tmp"
         ],
         "source": "cargo_admission",
         "state": "active"
@@ -2321,7 +2321,7 @@
         ],
         "id": "temp-8233707e3f0f",
         "kind": "e2e_artifact",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": null,
         "path": "[WORKSPACE]/events.jsonl",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
@@ -2342,7 +2342,7 @@
         ],
         "id": "temp-61cc7fa94ac7",
         "kind": "validation_output",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": null,
         "path": "[WORKSPACE]/validation.log",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
@@ -2363,7 +2363,7 @@
         ],
         "id": "temp-dd220a4846d3",
         "kind": "clean_worktree_validation_dir",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": "Codex",
         "path": "[WORKSPACE]/clean-worktree-validation",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
@@ -2384,14 +2384,14 @@
         ],
         "id": "temp-82ced7cd5a16",
         "kind": "ubs_shadow_workspace",
-        "last_observed_at": "2026-05-09T09:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": "Codex",
-        "path": "/data/tmp/tmp.ubs/git_scan",
+        "path": "[DATA_TMP]/tmp.ubs/git_scan",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
         "reason": "UBS staged shadow workspace fixture",
         "review_commands": [
-          "test -e /data/tmp/tmp.ubs/git_scan && stat /data/tmp/tmp.ubs/git_scan",
-          "du -sh /data/tmp/tmp.ubs/git_scan"
+          "test -e [DATA_TMP]/tmp.ubs/git_scan && stat [DATA_TMP]/tmp.ubs/git_scan",
+          "du -sh [DATA_TMP]/tmp.ubs/git_scan"
         ],
         "source": "capture_manifest.temp_artifacts",
         "state": "retained"
@@ -2405,20 +2405,20 @@
         ],
         "id": "temp-74acd2e81ea6",
         "kind": "cargo_target_dir",
-        "last_observed_at": "2026-05-01T00:00:00+00:00",
+        "last_observed_at": "[TIMESTAMP]",
         "owner": null,
-        "path": "/data/tmp/pi_agent_rust_cargo/unknown/stale-target",
+        "path": "[PI_AGENT_CARGO_TMP]/unknown/stale-target",
         "permission_boundary": "No deletion command emitted. Explicit written operator approval is required before deleting any file or directory.",
         "reason": "stale unknown-owner fixture",
         "review_commands": [
-          "test -e /data/tmp/pi_agent_rust_cargo/unknown/stale-target && stat /data/tmp/pi_agent_rust_cargo/unknown/stale-target",
-          "du -sh /data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "test -e [PI_AGENT_CARGO_TMP]/unknown/stale-target && stat [PI_AGENT_CARGO_TMP]/unknown/stale-target",
+          "du -sh [PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "source": "capture_manifest.temp_artifacts",
         "state": "stale_candidate"
       }
     ],
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "guards": {
       "explicit_operator_permission_required": true,
       "no_destructive_commands_emitted": true,
@@ -2427,9 +2427,9 @@
       "unknown_owner_deletion_protected": true
     },
     "known_temp_roots": [
-      "/data/tmp/pi_agent_rust_cargo",
-      "/data/tmp",
-      "/tmp",
+      "[PI_AGENT_CARGO_TMP]",
+      "[DATA_TMP]",
+      "[TMP]",
       ".rch-target*",
       ".rch-tmp*"
     ],
@@ -2561,7 +2561,7 @@
         "status": "pressured"
       }
     ],
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "guards": {
       "advisory_only": true,
       "does_not_replace_source_runtime_metrics": true,
@@ -2717,7 +2717,7 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "cache_reuse": "target_dir_reuse_if_clean",
         "command_class": "cargo_test_focused",
@@ -2728,14 +2728,14 @@
           "rch_admission.queue_forecast"
         ],
         "exact_commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo test conformance"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo test conformance"
         ],
         "id": "focused_tests",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
         "no_local_fallback": true,
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true,
         "risk": "medium",
@@ -2747,7 +2747,7 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "cache_reuse": "target_dir_reuse_if_clean",
         "command_class": "cargo_test_e2e_conformance",
@@ -2758,14 +2758,14 @@
           "rch_admission.queue_forecast"
         ],
         "exact_commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo test e2e"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo test e2e"
         ],
         "id": "e2e_conformance",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
         "no_local_fallback": true,
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true,
         "risk": "medium",
@@ -2777,7 +2777,7 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "cache_reuse": "target_dir_reuse_if_clean",
         "command_class": "cargo_check_all_targets",
@@ -2788,14 +2788,14 @@
           "remote_validation_proof_ledger.summary"
         ],
         "exact_commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo check --all-targets"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo check --all-targets"
         ],
         "id": "all_targets_check",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
         "no_local_fallback": true,
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true,
         "risk": "high",
@@ -2807,7 +2807,7 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "cache_reuse": "target_dir_reuse_if_clean",
         "command_class": "cargo_clippy_all_targets",
@@ -2818,21 +2818,21 @@
           "remote_validation_proof_ledger.summary"
         ],
         "exact_commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo clippy --all-targets -- -D warnings"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo clippy --all-targets -- -D warnings"
         ],
         "id": "clippy",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
         "no_local_fallback": true,
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true,
         "risk": "high",
         "title": "All-targets clippy"
       }
     ],
-    "generated_at": "2026-05-09T09:00:00+00:00",
+    "generated_at": "[TIMESTAMP]",
     "guards": {
       "advisory_only": true,
       "does_not_replace_rch_or_validation_broker": true,
@@ -2848,22 +2848,22 @@
     },
     "local_fallback_rejections": [
       {
-        "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo test conformance",
+        "command": "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo test conformance",
         "group_id": "focused_tests",
         "reason": "RCH-required validation must not fail open into a local cargo build."
       },
       {
-        "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo test e2e",
+        "command": "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo test e2e",
         "group_id": "e2e_conformance",
         "reason": "RCH-required validation must not fail open into a local cargo build."
       },
       {
-        "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo check --all-targets",
+        "command": "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo check --all-targets",
         "group_id": "all_targets_check",
         "reason": "RCH-required validation must not fail open into a local cargo build."
       },
       {
-        "command": "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo clippy --all-targets -- -D warnings",
+        "command": "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo clippy --all-targets -- -D warnings",
         "group_id": "clippy",
         "reason": "RCH-required validation must not fail open into a local cargo build."
       }
@@ -2898,7 +2898,7 @@
       {
         "action": "defer",
         "commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo test conformance"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo test conformance"
         ],
         "group_id": "focused_tests",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
@@ -2906,18 +2906,18 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true
       },
       {
         "action": "defer",
         "commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo test e2e"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo test e2e"
         ],
         "group_id": "e2e_conformance",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
@@ -2925,18 +2925,18 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true
       },
       {
         "action": "defer",
         "commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo check --all-targets"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo check --all-targets"
         ],
         "group_id": "all_targets_check",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
@@ -2944,18 +2944,18 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true
       },
       {
         "action": "defer",
         "commands": [
-          "rch exec -- env CARGO_TARGET_DIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target TMPDIR=/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp cargo clippy --all-targets -- -D warnings"
+          "rch exec -- env CARGO_TARGET_DIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/target TMPDIR=[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp cargo clippy --all-targets -- -D warnings"
         ],
         "group_id": "clippy",
         "local_fallback_rejection_reason": "RCH-required validation must not fail open into a local cargo build.",
@@ -2963,11 +2963,11 @@
           "decision=backoff",
           "queue_recommended_action=backoff",
           "slot_pressure=saturated",
-          "stale_target_cache=/data/tmp/pi_agent_rust_cargo/unknown/stale-target"
+          "stale_target_cache=[PI_AGENT_CARGO_TMP]/unknown/stale-target"
         ],
         "required_env": {
-          "CARGO_TARGET_DIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/target",
-          "TMPDIR": "/data/tmp/pi_agent_rust_cargo/${USER:-agent}/tmp"
+          "CARGO_TARGET_DIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/target",
+          "TMPDIR": "[PI_AGENT_CARGO_TMP]/${USER:-agent}/tmp"
         },
         "requires_rch": true
       }

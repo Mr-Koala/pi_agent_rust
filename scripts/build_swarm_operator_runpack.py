@@ -185,6 +185,9 @@ BACKPRESSURE_BUDGET_CONTRACT_PATH = Path(
 GOLDEN_REPORT_DIRECTORY = Path("tests/golden_corpus/swarm_operator_runpack")
 COMPLETE_RUNPACK_GOLDEN = "complete_runpack_projection.json"
 AUTOPILOT_PLAN_GOLDEN = "autopilot_plan_projection.json"
+WORK_ADMISSION_GATE_GOLDEN = "work_admission_gate_projection.json"
+AUTOPILOT_DECISION_GATE_GOLDEN = "autopilot_decision_gate_projection.json"
+MALFORMED_SOURCE_GOLDEN = "malformed_source_fail_closed_projection.json"
 UPDATE_GOLDEN_ENV = "UPDATE_SWARM_OPERATOR_RUNPACK_GOLDEN"
 DEFAULT_MAX_ITEMS = 8
 DEFAULT_STALE_AFTER_HOURS = 24
@@ -235,6 +238,21 @@ SENSITIVE_VALUE_RE = re.compile(
     r"(?:api[_-]?key|authorization|password|registration_token|secret|token)"
     r"\s*[:=]\s*[\"']?[^\"'\s,}]+)"
 )
+ISO_TIMESTAMP_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+)
+SHA256_TEXT_RE = re.compile(r"\b[0-9a-f]{64}\b")
+GIT_SHA_TEXT_RE = re.compile(r"\b[0-9a-f]{40}\b")
+GOLDEN_DURATION_KEYS = {
+    "duration_ms",
+    "duration_us",
+    "elapsed_ms",
+    "elapsed_us",
+    "execution_time_ms",
+    "runtime_ms",
+    "wall_time_ms",
+}
 BOTTLENECK_CORE_SOURCE_IDS = (
     "doctor_swarm",
     "smoke_harness",
@@ -11595,31 +11613,54 @@ def assert_turn_pressure_ledger_contract(ledger: dict[str, Any]) -> None:
         assert guards.get(guard) is True, f"turn pressure guard must be true: {guard}"
 
 
-def canonicalize_for_golden(value: Any, workspace: Path) -> Any:
+def canonicalize_golden_string(value: str, workspace: Path) -> str:
     workspace_text = str(workspace)
+    repo_text = str(Path(__file__).resolve().parent.parent)
+    home_text = str(Path.home())
+    scrubbed = value.replace(workspace_text, "[WORKSPACE]")
+    scrubbed = scrubbed.replace(repo_text, "[PROJECT_ROOT]")
+    if home_text:
+        scrubbed = scrubbed.replace(home_text, "[HOME]")
+    scrubbed = scrubbed.replace("/data/tmp/pi_agent_rust_cargo", "[PI_AGENT_CARGO_TMP]")
+    scrubbed = scrubbed.replace("/data/tmp", "[DATA_TMP]")
+    scrubbed = re.sub(r"(^|\s)/tmp(?=/|$)", r"\1[TMP]", scrubbed)
+    scrubbed = SHA256_TEXT_RE.sub("[SHA256]", scrubbed)
+    scrubbed = GIT_SHA_TEXT_RE.sub("[GIT_SHA]", scrubbed)
+    return ISO_TIMESTAMP_RE.sub("[TIMESTAMP]", scrubbed)
+
+
+def canonicalize_for_golden(value: Any, workspace: Path) -> Any:
     if isinstance(value, dict):
         path_value = value.get("path")
-        workspace_scoped_path = isinstance(path_value, str) and workspace_text in path_value
+        workspace_scoped_path = isinstance(path_value, str) and str(workspace) in path_value
         canonicalized = {}
         for key, item in value.items():
             if key == "sha256" and isinstance(item, str):
                 canonicalized[key] = "[SHA256]"
             elif key == "size_bytes" and workspace_scoped_path:
                 canonicalized[key] = "[SIZE_BYTES]"
+            elif key in GOLDEN_DURATION_KEYS and isinstance(item, (int, float)):
+                canonicalized[key] = "[DURATION]"
             else:
                 canonicalized[key] = canonicalize_for_golden(item, workspace)
         return canonicalized
     if isinstance(value, list):
         return [canonicalize_for_golden(item, workspace) for item in value]
     if isinstance(value, str):
-        return value.replace(workspace_text, "[WORKSPACE]")
+        return canonicalize_golden_string(value, workspace)
     return value
 
 
-def assert_runpack_golden(runpack: dict[str, Any], workspace: Path) -> None:
+def assert_named_golden(
+    payload: dict[str, Any],
+    workspace: Path,
+    *,
+    golden_filename: str,
+    label: str,
+) -> None:
     repo_root = Path(__file__).resolve().parent.parent
-    golden_path = repo_root / GOLDEN_REPORT_DIRECTORY / COMPLETE_RUNPACK_GOLDEN
-    actual_projection = canonicalize_for_golden(runpack, workspace)
+    golden_path = repo_root / GOLDEN_REPORT_DIRECTORY / golden_filename
+    actual_projection = canonicalize_for_golden(payload, workspace)
     actual = json_dumps(actual_projection, pretty=True)
     if os.environ.get(UPDATE_GOLDEN_ENV) == "1":
         golden_path.parent.mkdir(parents=True, exist_ok=True)
@@ -11629,7 +11670,7 @@ def assert_runpack_golden(runpack: dict[str, Any], workspace: Path) -> None:
         expected = golden_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise AssertionError(
-            f"missing runpack golden {golden_path}; rerun with {UPDATE_GOLDEN_ENV}=1"
+            f"missing {label} golden {golden_path}; rerun with {UPDATE_GOLDEN_ENV}=1"
         ) from exc
     if actual != expected:
         diff = "\n".join(
@@ -11637,49 +11678,77 @@ def assert_runpack_golden(runpack: dict[str, Any], workspace: Path) -> None:
                 expected.splitlines(),
                 actual.splitlines(),
                 fromfile=str(golden_path),
-                tofile="actual swarm operator runpack projection",
+                tofile=f"actual {label} projection",
                 lineterm="",
             )
         )
         raise AssertionError(
-            "swarm operator runpack projection changed; update the golden only "
+            f"{label} projection changed; update the golden only "
             f"after reviewing the diff with `{UPDATE_GOLDEN_ENV}=1 "
             "python3 scripts/build_swarm_operator_runpack.py --self-test`\n"
             + diff
         )
 
 
+def assert_runpack_golden(runpack: dict[str, Any], workspace: Path) -> None:
+    assert_named_golden(
+        runpack,
+        workspace,
+        golden_filename=COMPLETE_RUNPACK_GOLDEN,
+        label="swarm operator runpack",
+    )
+
+
 def assert_autopilot_plan_golden(plan: dict[str, Any], workspace: Path) -> None:
-    repo_root = Path(__file__).resolve().parent.parent
-    golden_path = repo_root / GOLDEN_REPORT_DIRECTORY / AUTOPILOT_PLAN_GOLDEN
-    actual_projection = canonicalize_for_golden(plan, workspace)
-    actual = json_dumps(actual_projection, pretty=True)
-    if os.environ.get(UPDATE_GOLDEN_ENV) == "1":
-        golden_path.parent.mkdir(parents=True, exist_ok=True)
-        golden_path.write_text(actual, encoding="utf-8")
-        return
+    assert_named_golden(
+        plan,
+        workspace,
+        golden_filename=AUTOPILOT_PLAN_GOLDEN,
+        label="autopilot plan",
+    )
+
+
+def assert_work_admission_gate_golden(gate: dict[str, Any], workspace: Path) -> None:
+    assert_named_golden(
+        gate,
+        workspace,
+        golden_filename=WORK_ADMISSION_GATE_GOLDEN,
+        label="work admission gate",
+    )
+
+
+def assert_autopilot_decision_gate_golden(
+    summary: dict[str, Any],
+    workspace: Path,
+) -> None:
+    assert_named_golden(
+        summary,
+        workspace,
+        golden_filename=AUTOPILOT_DECISION_GATE_GOLDEN,
+        label="autopilot decision gate",
+    )
+
+
+def assert_malformed_source_golden(scenario: dict[str, Any], workspace: Path) -> None:
+    assert_named_golden(
+        scenario,
+        workspace,
+        golden_filename=MALFORMED_SOURCE_GOLDEN,
+        label="malformed source fail-closed scenario",
+    )
+
+
+def assert_work_admission_gate_missing_field_negative_control(
+    gate: dict[str, Any],
+) -> None:
+    malformed_gate = json.loads(json_dumps(gate))
+    malformed_gate.pop("decision", None)
     try:
-        expected = golden_path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise AssertionError(
-            f"missing autopilot plan golden {golden_path}; rerun with {UPDATE_GOLDEN_ENV}=1"
-        ) from exc
-    if actual != expected:
-        diff = "\n".join(
-            difflib.unified_diff(
-                expected.splitlines(),
-                actual.splitlines(),
-                fromfile=str(golden_path),
-                tofile="actual autopilot plan projection",
-                lineterm="",
-            )
-        )
-        raise AssertionError(
-            "autopilot plan projection changed; update the golden only after "
-            f"reviewing the diff with `{UPDATE_GOLDEN_ENV}=1 "
-            "python3 scripts/build_swarm_operator_runpack.py --self-test`\n"
-            + diff
-        )
+        assert_work_admission_gate_contract(malformed_gate)
+    except AssertionError as exc:
+        assert "missing top-level work admission gate key: decision" in str(exc)
+        return
+    raise AssertionError("work-admission golden negative control accepted missing decision")
 
 
 def assert_no_dangerous_runnable_commands(commands: list[dict[str, Any]]) -> None:
@@ -21533,6 +21602,8 @@ def run_self_test() -> int:
             for item in work_gate["dry_run_executor"]["never_execute"]
         )
         assert_work_admission_gate_contract(work_gate)
+        assert_work_admission_gate_golden(work_gate, workspace)
+        assert_work_admission_gate_missing_field_negative_control(work_gate)
         plan_output_args = argparse.Namespace(
             **{
                 **vars(autopilot_args),
@@ -22508,6 +22579,10 @@ def run_self_test() -> int:
         assert autopilot_e2e["scenarios"]["malformed_source_fail_closed"][
             "selected_action"
         ] == "fail_closed"
+        assert_malformed_source_golden(
+            autopilot_e2e["scenarios"]["malformed_source_fail_closed"],
+            workspace,
+        )
         degraded_coordination_e2e = build_degraded_coordination_runpack_e2e_summary(
             output_dir=workspace / "degraded-coordination-e2e",
             events_path=workspace / "degraded-coordination-e2e" / "events.jsonl",
@@ -22646,6 +22721,7 @@ def run_self_test() -> int:
         assert final_gate["decision"] == "close_final_gate_and_parent_epic"
         assert final_gate["follow_up_required"] is False
         assert not final_gate["follow_up_beads"]
+        assert_autopilot_decision_gate_golden(final_gate, workspace)
         context_gate_issues = [
             {
                 "id": "bd-ircr3",
