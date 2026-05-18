@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -279,6 +280,84 @@ def deferred_planning_items(
     return sorted(items, key=lambda item: (int(item.get("priority", 99)), str(item.get("id", ""))))
 
 
+def candidate_child_title(item: dict[str, Any]) -> str:
+    labels = {str(label).lower() for label in item.get("labels") or []}
+    title = str(item.get("title") or "roadmap").strip()
+    if "operations" in labels:
+        return "Add next swarm operations diagnostic from roadmap"
+    if "performance" in labels or "reliability" in labels:
+        return "Extract next swarm responsiveness regression from roadmap"
+    if "closeout" in labels:
+        return "Refresh closeout proof-memory follow-up from roadmap"
+    if "evidence" in labels:
+        return "Add next artifact truth maintenance guard from roadmap"
+    return f"Refine {title} into next executable child bead"
+
+
+def child_priority(item: dict[str, Any]) -> int:
+    try:
+        priority = int(item.get("priority", 2))
+    except (TypeError, ValueError):
+        priority = 2
+    return min(3, max(2, priority + 1))
+
+
+def shell_command(args: list[str]) -> str:
+    return " ".join(shlex.quote(arg) for arg in args)
+
+
+def deferred_planning_create_templates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    templates: list[dict[str, Any]] = []
+    for item in items[:10]:
+        parent_id = str(item.get("id") or "").strip()
+        if not parent_id:
+            continue
+        labels = sorted(
+            {
+                str(label).lower()
+                for label in item.get("labels") or []
+                if str(label).strip()
+            }
+        )
+        child_labels = labels or ["planning"]
+        title = candidate_child_title(item)
+        priority = child_priority(item)
+        description = (
+            f"Created from empty-queue convergence planning prompt for {parent_id}. "
+            "Convert the deferred roadmap into one narrow, executable child task with "
+            "explicit validation evidence and no broad planning-only scope."
+        )
+        command = shell_command(
+            [
+                "br",
+                "create",
+                "--title",
+                title,
+                "--type",
+                "task",
+                "--priority",
+                str(priority),
+                "--parent",
+                parent_id,
+                "--labels",
+                ",".join(child_labels),
+                "--description",
+                description,
+            ]
+        )
+        templates.append(
+            {
+                "parent_id": parent_id,
+                "parent_title": item.get("title"),
+                "title": title,
+                "priority": priority,
+                "labels": child_labels,
+                "command": command,
+            }
+        )
+    return templates
+
+
 def analyze_beads(
     issues: list[dict[str, Any]],
     *,
@@ -324,6 +403,7 @@ def analyze_beads(
         "stale_in_progress_items": stale_in_progress[:25],
         "deferred_only_items": [issue_summary(issue, now=now) for issue in deferred[:25]],
         "deferred_planning_items": planning_items[:25],
+        "deferred_planning_create_templates": deferred_planning_create_templates(planning_items),
     }
 
 
@@ -903,6 +983,7 @@ def build_next_actions(
                         {"id": item.get("id"), "title": item.get("title")}
                         for item in beads["deferred_planning_items"]
                     ],
+                    "create_templates": beads["deferred_planning_create_templates"],
                     "reason": (
                         "deferred roadmap/planning epics remain without open child work; create "
                         "or refine actionable child Beads before declaring the queue clean."
@@ -1098,6 +1179,8 @@ def print_text_report(report: dict[str, Any]) -> None:
         if action.get("issue_ids"):
             issues = " issues=" + ",".join(str(item) for item in action["issue_ids"])
         print(f"- next_action={action['action']}{issue}{issues}: {action['reason']}")
+        for template in action.get("create_templates", []):
+            print(f"  create_template={template['command']}")
 
 
 def write_json(path: Path, payload: Any) -> Path:
@@ -1355,6 +1438,27 @@ def run_self_test() -> int:
         assert_condition(
             planning_report["next_actions"][0]["issue_ids"] == ["bd-plan"],
             "planning next action should name the deferred epic",
+            planning_report,
+        )
+        create_templates = planning_report["next_actions"][0]["create_templates"]
+        assert_condition(
+            len(create_templates) == 1,
+            "planning next action should include one concrete create template",
+            planning_report,
+        )
+        assert_condition(
+            create_templates[0]["parent_id"] == "bd-plan",
+            "create template should preserve the parent epic",
+            planning_report,
+        )
+        assert_condition(
+            "--parent bd-plan" in create_templates[0]["command"],
+            "create template should include an exact parent argument",
+            planning_report,
+        )
+        assert_condition(
+            "br create --title" in create_templates[0]["command"],
+            "create template should include an executable br create command",
             planning_report,
         )
 
