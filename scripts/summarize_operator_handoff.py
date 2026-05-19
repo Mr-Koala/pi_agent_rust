@@ -131,6 +131,7 @@ def normalize_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     rch = as_object(payload.get("rch"), field="rch")
     action_plan = as_object(payload.get("action_plan"), field="action_plan")
     beads = as_object(payload.get("beads"), field="beads")
+    completion_audit = normalize_completion_audit(payload.get("completion_audit"))
 
     return (
         {
@@ -186,6 +187,7 @@ def normalize_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
                     action_plan.get("decisions"), "action_plan.decisions"
                 ),
             },
+            "completion_audit": completion_audit,
         },
         redaction_counter,
     )
@@ -199,6 +201,124 @@ def normalize_records(value: Any, field: str) -> list[dict[str, Any]]:
             {str(key): record[key] for key in sorted(record.keys(), key=str)}
         )
     return records
+
+
+def bool_or_none(value: Any, *, field: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raise HandoffError(f"{field} must be a boolean when provided")
+
+
+def normalize_completion_requirement(item: dict[str, Any]) -> dict[str, Any]:
+    refs = item.get("evidence_refs", item.get("refs", []))
+    return {
+        "id": str(item.get("id") or "unknown"),
+        "kind": str(item.get("kind") or "unknown"),
+        "status": str(item.get("evidence_status") or item.get("status") or "unknown"),
+        "issue": str(item.get("issue") or ""),
+        "refs": sorted(string_list(refs, field="completion_audit.requirement.refs")),
+        "text": str(item.get("text") or ""),
+    }
+
+
+def normalize_completion_audit(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {
+            "source_present": False,
+            "status": "not_provided",
+            "completion_allowed": None,
+            "blocked_requirements": [],
+            "unresolved_gaps": [],
+            "operator_next_actions": [],
+            "claim_boundaries": {},
+            "proxy_only_count": 0,
+            "missing_push": False,
+        }
+    audit = as_object(value, field="completion_audit")
+    source_present = audit.get("source_present")
+    if source_present is None:
+        source_present = True
+    if not isinstance(source_present, bool):
+        raise HandoffError("completion_audit.source_present must be a boolean")
+    if not source_present:
+        return {
+            "source_present": False,
+            "status": str(audit.get("status") or "missing"),
+            "completion_allowed": bool_or_none(
+                audit.get("completion_allowed"), field="completion_audit.completion_allowed"
+            ),
+            "blocked_requirements": [],
+            "unresolved_gaps": normalize_records(
+                audit.get("unresolved_gaps"), "completion_audit.unresolved_gaps"
+            ),
+            "operator_next_actions": string_list(
+                audit.get("operator_next_actions"), field="completion_audit.operator_next_actions"
+            ),
+            "claim_boundaries": as_object(
+                audit.get("claim_boundaries"), field="completion_audit.claim_boundaries"
+            ),
+            "proxy_only_count": 0,
+            "missing_push": False,
+        }
+
+    requirements = [
+        normalize_completion_requirement(item)
+        for item in as_list(audit.get("requirements"), field="completion_audit.requirements")
+        if isinstance(item, dict)
+    ]
+    explicit_blocked = [
+        normalize_completion_requirement(item)
+        for item in as_list(
+            audit.get("blocked_requirements"), field="completion_audit.blocked_requirements"
+        )
+        if isinstance(item, dict)
+    ]
+    blocked_requirements = explicit_blocked + [
+        item for item in requirements if item["status"] != "covered"
+    ]
+    evidence = as_object(audit.get("evidence"), field="completion_audit.evidence")
+    admission = as_object(
+        evidence.get("closeout_admission"), field="completion_audit.evidence.closeout_admission"
+    )
+    claim_boundaries = as_object(
+        audit.get("claim_boundaries") or admission.get("claim_boundaries"),
+        field="completion_audit.claim_boundaries",
+    )
+    unresolved_gaps = normalize_records(
+        audit.get("unresolved_gaps") or evidence.get("unresolved_gaps"),
+        "completion_audit.unresolved_gaps",
+    )
+    operator_next_actions = string_list(
+        audit.get("operator_next_actions") or admission.get("operator_next_actions"),
+        field="completion_audit.operator_next_actions",
+    )
+    proxy_only_count = sum(
+        1 for item in blocked_requirements if item["status"] == "proxy_only"
+    )
+    missing_push = any(
+        item["kind"] in ("push", "commit_push")
+        and item["status"] != "covered"
+        and (
+            "push" in item["issue"].lower()
+            or any("push" in str(ref).lower() for ref in item["refs"])
+        )
+        for item in blocked_requirements
+    )
+    return {
+        "source_present": True,
+        "status": str(audit.get("overall_status") or audit.get("status") or "unknown"),
+        "completion_allowed": bool_or_none(
+            audit.get("completion_allowed"), field="completion_audit.completion_allowed"
+        ),
+        "blocked_requirements": blocked_requirements,
+        "unresolved_gaps": unresolved_gaps,
+        "operator_next_actions": operator_next_actions,
+        "claim_boundaries": claim_boundaries,
+        "proxy_only_count": proxy_only_count,
+        "missing_push": missing_push,
+    }
 
 
 def invariant(invariant_id: str, status: str, summary: str, evidence: list[str]) -> dict[str, Any]:
@@ -219,6 +339,7 @@ def build_invariants(payload: dict[str, Any]) -> list[dict[str, Any]]:
     agent_mail = payload["agent_mail"]
     rch = payload["rch"]
     action_plan = payload["action_plan"]
+    completion_audit = payload["completion_audit"]
     dirty_count = len(git["dirty_files"]) + len(git["untracked_files"])
     expired_reservations = [
         item
@@ -230,6 +351,19 @@ def build_invariants(payload: dict[str, Any]) -> list[dict[str, Any]]:
         for item in action_plan["decisions"]
         if str(item.get("status") or "").lower() not in ("closed", "resolved", "done")
     ]
+    if not completion_audit["source_present"]:
+        completion_status = "pass" if completion_audit["status"] == "not_provided" else "warn"
+        completion_summary = f"completion audit source={completion_audit['status']}"
+    elif completion_audit["completion_allowed"] is True:
+        completion_status = "pass"
+        completion_summary = "completion audit allows closeout"
+    else:
+        completion_status = "block"
+        completion_summary = (
+            f"completion audit status={completion_audit['status']} "
+            f"blocked={len(completion_audit['blocked_requirements'])} "
+            f"gaps={len(completion_audit['unresolved_gaps'])}"
+        )
     return [
         invariant(
             "git_worktree_clean",
@@ -283,6 +417,19 @@ def build_invariants(payload: dict[str, Any]) -> list[dict[str, Any]]:
             else f"{len(open_decisions)} open action-plan decision(s)",
             [str(item.get("id") or item.get("decision") or "open_decision") for item in open_decisions],
         ),
+        invariant(
+            "completion_audit",
+            completion_status,
+            completion_summary,
+            [
+                str(item.get("id") or item.get("kind") or "blocked_requirement")
+                for item in completion_audit["blocked_requirements"]
+            ]
+            + [
+                str(item.get("gap_id") or item.get("id") or "unresolved_gap")
+                for item in completion_audit["unresolved_gaps"]
+            ],
+        ),
     ]
 
 
@@ -313,6 +460,13 @@ def build_safe_next_actions(payload: dict[str, Any], invariants: list[dict[str, 
         actions.append("Wait for RCH pressure to clear or use a smaller validation proof.")
     if status_by_id["action_plan_decisions"]["status"] == "warn":
         actions.append("Resolve open action-plan decisions before starting the dependent operator lane.")
+    completion_audit = payload["completion_audit"]
+    if status_by_id["completion_audit"]["status"] == "block":
+        actions.append("Resolve completion-audit blockers before admitting closeout.")
+        if completion_audit["operator_next_actions"]:
+            actions.extend(completion_audit["operator_next_actions"])
+    elif status_by_id["completion_audit"]["status"] == "warn":
+        actions.append("Attach current completion-audit JSON before relying on closeout admission status.")
     if not actions:
         ready = payload["beads"]["ready"]
         if ready:
@@ -336,6 +490,8 @@ def build_must_not_touch(payload: dict[str, Any], invariants: list[dict[str, Any
         items.append("Do not claim validation is green until failed gates pass.")
     if any(item["id"] == "evidence_freshness" and item["status"] == "block" for item in invariants):
         items.append("Do not make strict release/drop-in claims from stale evidence.")
+    if payload["completion_audit"]["claim_boundaries"].get("authorizes_file_deletion") is True:
+        items.append("Do not delete files from completion-audit claim-boundary evidence.")
     return items or ["No additional protected paths beyond repo instructions and active Beads ownership."]
 
 
@@ -382,6 +538,20 @@ def render_markdown(output: dict[str, Any]) -> str:
         )
     else:
         lines.append("- No validation gates were provided.")
+    completion = output["completion_audit"]
+    lines.extend(["", "## Completion Audit"])
+    lines.append(f"- source_present: {str(completion['source_present']).lower()}")
+    lines.append(f"- status: {completion['status']}")
+    lines.append(f"- completion_allowed: {str(completion['completion_allowed']).lower()}")
+    lines.append(f"- blocked_requirements: {len(completion['blocked_requirements'])}")
+    lines.append(f"- unresolved_gaps: {len(completion['unresolved_gaps'])}")
+    if completion["missing_push"]:
+        lines.append("- missing_push: true")
+    if completion["proxy_only_count"]:
+        lines.append(f"- proxy_only_requirements: {completion['proxy_only_count']}")
+    if completion["operator_next_actions"]:
+        lines.append("- operator_next_actions:")
+        lines.extend(f"  - {item}" for item in completion["operator_next_actions"])
     lines.extend(["", "## Open Action-Plan Decisions"])
     open_decisions = output["open_action_plan_decisions"]
     if open_decisions:
@@ -421,7 +591,9 @@ def evaluate(payload: dict[str, Any], *, generated_at: str) -> dict[str, Any]:
             "agent_mail": normalized["agent_mail"]["health"],
             "rch": normalized["rch"]["status"],
             "action_plan": "open_decisions" if open_decisions else "clear",
+            "completion_audit": normalized["completion_audit"]["status"],
         },
+        "completion_audit": normalized["completion_audit"],
         "invariants": invariants,
         "safe_next_actions": build_safe_next_actions(normalized, invariants),
         "must_not_touch": build_must_not_touch(normalized, invariants),

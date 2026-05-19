@@ -18,6 +18,7 @@
     "git",
     "beads",
     "source_statuses",
+    "completion_audit",
     "invariants",
     "safe_next_actions",
     "must_not_touch",
@@ -35,7 +36,8 @@
     "agent_mail_usable",
     "reservations_current",
     "rch_available",
-    "action_plan_decisions"
+    "action_plan_decisions",
+    "completion_audit"
   ],
   "required_true_guardrails": [
     "read_only_summary",
@@ -52,7 +54,11 @@
     "expired_reservations",
     "stale_evidence",
     "failed_validation",
-    "redaction"
+    "redaction",
+    "completion_audit_pass",
+    "completion_audit_blocked",
+    "completion_audit_missing_source",
+    "completion_audit_proxy_only"
   ],
   "authority_boundary": {
     "does_not_replace": [

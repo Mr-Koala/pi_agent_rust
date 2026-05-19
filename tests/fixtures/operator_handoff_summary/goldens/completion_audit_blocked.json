@@ -6,23 +6,34 @@
     "stalled_candidates": []
   },
   "completion_audit": {
-    "blocked_requirements": [],
-    "claim_boundaries": {},
-    "completion_allowed": null,
-    "missing_push": false,
-    "operator_next_actions": [],
+    "blocked_requirements": [
+      {
+        "id": "REQ-004",
+        "issue": "missing push evidence",
+        "kind": "commit_push",
+        "refs": [
+          "commit[0]",
+          "commit_push:required_pair",
+          "push[0]"
+        ],
+        "status": "failed",
+        "text": ""
+      }
+    ],
+    "claim_boundaries": {
+      "authorizes_file_deletion": false
+    },
+    "completion_allowed": false,
+    "missing_push": true,
+    "operator_next_actions": [
+      "Push the closeout commit before admitting completion."
+    ],
     "proxy_only_count": 0,
-    "source_present": false,
-    "status": "not_provided",
+    "source_present": true,
+    "status": "blocked",
     "unresolved_gaps": []
   },
-  "gates_proving_claim": [
-    {
-      "evidence": "[REDACTED]",
-      "id": "secret_gate",
-      "status": "pass"
-    }
-  ],
+  "gates_proving_claim": [],
   "generated_at": "[GENERATED_AT]",
   "git": {
     "ahead": 0,
@@ -59,9 +70,7 @@
       "summary": "HEAD matches upstream"
     },
     {
-      "evidence": [
-        "secret_gate"
-      ],
+      "evidence": [],
       "id": "validation_gates",
       "status": "pass",
       "summary": "validation status=pass"
@@ -97,13 +106,15 @@
       "summary": "No open action-plan decisions"
     },
     {
-      "evidence": [],
+      "evidence": [
+        "REQ-004"
+      ],
       "id": "completion_audit",
-      "status": "pass",
-      "summary": "completion audit source=not_provided"
+      "status": "block",
+      "summary": "completion audit status=blocked blocked=1 gaps=0"
     }
   ],
-  "markdown": "# Operator Handoff Summary\n\n- Status: clean\n- Project: pi_agent_rust\n- Branch: main\n- Head: abc1234\n- Generated: [GENERATED_AT]\n\n## What Changed\n- No recently closed beads were provided.\n\n## Safe Next Actions\n- Capture fresh triage with bv/br before starting new work.\n\n## Must Not Touch\n- No additional protected paths beyond repo instructions and active Beads ownership.\n\n## Gates\n- secret_gate: pass [REDACTED]\n\n## Completion Audit\n- source_present: false\n- status: not_provided\n- completion_allowed: none\n- blocked_requirements: 0\n- unresolved_gaps: 0\n\n## Open Action-Plan Decisions\n- None.\n\n## Invariants\n- git_worktree_clean: pass - Worktree is clean\n- git_pushed: pass - HEAD matches upstream\n- validation_gates: pass - validation status=pass\n- evidence_freshness: pass - evidence freshness=fresh\n- agent_mail_usable: pass - agent mail health=green semantic=pass\n- reservations_current: pass - No expired reservations\n- rch_available: pass - rch status=ok\n- action_plan_decisions: pass - No open action-plan decisions\n- completion_audit: pass - completion audit source=not_provided\n",
+  "markdown": "# Operator Handoff Summary\n\n- Status: blocked\n- Project: pi_agent_rust\n- Branch: main\n- Head: abc1234\n- Generated: [GENERATED_AT]\n\n## What Changed\n- No recently closed beads were provided.\n\n## Safe Next Actions\n- Resolve completion-audit blockers before admitting closeout.\n- Push the closeout commit before admitting completion.\n\n## Must Not Touch\n- No additional protected paths beyond repo instructions and active Beads ownership.\n\n## Gates\n- No validation gates were provided.\n\n## Completion Audit\n- source_present: true\n- status: blocked\n- completion_allowed: false\n- blocked_requirements: 1\n- unresolved_gaps: 0\n- missing_push: true\n- operator_next_actions:\n  - Push the closeout commit before admitting completion.\n\n## Open Action-Plan Decisions\n- None.\n\n## Invariants\n- git_worktree_clean: pass - Worktree is clean\n- git_pushed: pass - HEAD matches upstream\n- validation_gates: pass - validation status=pass\n- evidence_freshness: pass - evidence freshness=fresh\n- agent_mail_usable: pass - agent mail health=green semantic=pass\n- reservations_current: pass - No expired reservations\n- rch_available: pass - rch status=ok\n- action_plan_decisions: pass - No open action-plan decisions\n- completion_audit: block - completion audit status=blocked blocked=1 gaps=0\n",
   "must_not_touch": [
     "No additional protected paths beyond repo instructions and active Beads ownership."
   ],
@@ -115,20 +126,21 @@
   "purpose": "operator_handoff_invariant_summary",
   "redaction_summary": {
     "raw_sensitive_values_retained": false,
-    "redacted_fields": 3
+    "redacted_fields": 0
   },
   "safe_next_actions": [
-    "Capture fresh triage with bv/br before starting new work."
+    "Resolve completion-audit blockers before admitting closeout.",
+    "Push the closeout commit before admitting completion."
   ],
   "schema": "pi.operator.handoff_summary.v1",
   "source_statuses": {
     "action_plan": "clear",
     "agent_mail": "green",
-    "completion_audit": "not_provided",
+    "completion_audit": "blocked",
     "evidence_freshness": "fresh",
     "git": "clean",
     "rch": "ok",
     "validation": "pass"
   },
-  "status": "clean"
+  "status": "blocked"
 }

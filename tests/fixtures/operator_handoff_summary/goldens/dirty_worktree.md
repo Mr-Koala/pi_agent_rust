@@ -19,6 +19,13 @@
 ## Gates
 - py_compile: pass
 
+## Completion Audit
+- source_present: false
+- status: not_provided
+- completion_allowed: none
+- blocked_requirements: 0
+- unresolved_gaps: 0
+
 ## Open Action-Plan Decisions
 - None.
 
@@ -31,3 +38,4 @@
 - reservations_current: pass - No expired reservations
 - rch_available: pass - rch status=ok
 - action_plan_decisions: pass - No open action-plan decisions
+- completion_audit: pass - completion audit source=not_provided

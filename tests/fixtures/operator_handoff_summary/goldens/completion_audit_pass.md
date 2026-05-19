@@ -1,6 +1,6 @@
 # Operator Handoff Summary
 
-- Status: watch
+- Status: clean
 - Project: pi_agent_rust
 - Branch: main
 - Head: abc1234
@@ -10,7 +10,7 @@
 - No recently closed beads were provided.
 
 ## Safe Next Actions
-- Refresh or release expired reservations before treating ownership as current.
+- Capture fresh triage with bv/br before starting new work.
 
 ## Must Not Touch
 - No additional protected paths beyond repo instructions and active Beads ownership.
@@ -19,9 +19,9 @@
 - No validation gates were provided.
 
 ## Completion Audit
-- source_present: false
-- status: not_provided
-- completion_allowed: none
+- source_present: true
+- status: complete
+- completion_allowed: true
 - blocked_requirements: 0
 - unresolved_gaps: 0
 
@@ -34,7 +34,7 @@
 - validation_gates: pass - validation status=pass
 - evidence_freshness: pass - evidence freshness=fresh
 - agent_mail_usable: pass - agent mail health=green semantic=pass
-- reservations_current: warn - 1 expired reservation(s)
+- reservations_current: pass - No expired reservations
 - rch_available: pass - rch status=ok
 - action_plan_decisions: pass - No open action-plan decisions
-- completion_audit: pass - completion audit source=not_provided
+- completion_audit: pass - completion audit allows closeout

@@ -1,6 +1,6 @@
 # Operator Handoff Summary
 
-- Status: blocked
+- Status: watch
 - Project: pi_agent_rust
 - Branch: main
 - Head: abc1234
@@ -10,19 +10,17 @@
 - No recently closed beads were provided.
 
 ## Safe Next Actions
-- Fix or rerun the failed validation gates before claiming more implementation work.
-- Use Beads comments as the coordination record until Agent Mail is healthy.
-- Wait for RCH pressure to clear or use a smaller validation proof.
+- Attach current completion-audit JSON before relying on closeout admission status.
 
 ## Must Not Touch
-- Do not claim validation is green until failed gates pass.
+- No additional protected paths beyond repo instructions and active Beads ownership.
 
 ## Gates
-- cargo_clippy_all_targets_rch: fail clippy.log
+- No validation gates were provided.
 
 ## Completion Audit
 - source_present: false
-- status: not_provided
+- status: missing
 - completion_allowed: none
 - blocked_requirements: 0
 - unresolved_gaps: 0
@@ -33,10 +31,10 @@
 ## Invariants
 - git_worktree_clean: pass - Worktree is clean
 - git_pushed: pass - HEAD matches upstream
-- validation_gates: block - validation status=fail
+- validation_gates: pass - validation status=pass
 - evidence_freshness: pass - evidence freshness=fresh
-- agent_mail_usable: warn - agent mail health=red semantic=fail
+- agent_mail_usable: pass - agent mail health=green semantic=pass
 - reservations_current: pass - No expired reservations
-- rch_available: warn - rch status=degraded
+- rch_available: pass - rch status=ok
 - action_plan_decisions: pass - No open action-plan decisions
-- completion_audit: pass - completion audit source=not_provided
+- completion_audit: warn - completion audit source=missing

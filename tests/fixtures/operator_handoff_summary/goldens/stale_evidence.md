@@ -19,6 +19,13 @@
 ## Gates
 - No validation gates were provided.
 
+## Completion Audit
+- source_present: false
+- status: not_provided
+- completion_allowed: none
+- blocked_requirements: 0
+- unresolved_gaps: 0
+
 ## Open Action-Plan Decisions
 - renew-dropin-verdict: renew_stale_evidence
 
@@ -31,3 +38,4 @@
 - reservations_current: pass - No expired reservations
 - rch_available: pass - rch status=ok
 - action_plan_decisions: warn - 1 open action-plan decision(s)
+- completion_audit: pass - completion audit source=not_provided

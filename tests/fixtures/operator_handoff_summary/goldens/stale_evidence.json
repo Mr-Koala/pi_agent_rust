@@ -5,6 +5,17 @@
     "ready": [],
     "stalled_candidates": []
   },
+  "completion_audit": {
+    "blocked_requirements": [],
+    "claim_boundaries": {},
+    "completion_allowed": null,
+    "missing_push": false,
+    "operator_next_actions": [],
+    "proxy_only_count": 0,
+    "source_present": false,
+    "status": "not_provided",
+    "unresolved_gaps": []
+  },
   "gates_proving_claim": [],
   "generated_at": "[GENERATED_AT]",
   "git": {
@@ -80,9 +91,15 @@
       "id": "action_plan_decisions",
       "status": "warn",
       "summary": "1 open action-plan decision(s)"
+    },
+    {
+      "evidence": [],
+      "id": "completion_audit",
+      "status": "pass",
+      "summary": "completion audit source=not_provided"
     }
   ],
-  "markdown": "# Operator Handoff Summary\n\n- Status: blocked\n- Project: pi_agent_rust\n- Branch: main\n- Head: abc1234\n- Generated: [GENERATED_AT]\n\n## What Changed\n- No recently closed beads were provided.\n\n## Safe Next Actions\n- Renew stale or missing evidence before relying on release or drop-in claims.\n- Resolve open action-plan decisions before starting the dependent operator lane.\n\n## Must Not Touch\n- Do not make strict release/drop-in claims from stale evidence.\n\n## Gates\n- No validation gates were provided.\n\n## Open Action-Plan Decisions\n- renew-dropin-verdict: renew_stale_evidence\n\n## Invariants\n- git_worktree_clean: pass - Worktree is clean\n- git_pushed: pass - HEAD matches upstream\n- validation_gates: pass - validation status=pass\n- evidence_freshness: block - evidence freshness=stale\n- agent_mail_usable: pass - agent mail health=green semantic=pass\n- reservations_current: pass - No expired reservations\n- rch_available: pass - rch status=ok\n- action_plan_decisions: warn - 1 open action-plan decision(s)\n",
+  "markdown": "# Operator Handoff Summary\n\n- Status: blocked\n- Project: pi_agent_rust\n- Branch: main\n- Head: abc1234\n- Generated: [GENERATED_AT]\n\n## What Changed\n- No recently closed beads were provided.\n\n## Safe Next Actions\n- Renew stale or missing evidence before relying on release or drop-in claims.\n- Resolve open action-plan decisions before starting the dependent operator lane.\n\n## Must Not Touch\n- Do not make strict release/drop-in claims from stale evidence.\n\n## Gates\n- No validation gates were provided.\n\n## Completion Audit\n- source_present: false\n- status: not_provided\n- completion_allowed: none\n- blocked_requirements: 0\n- unresolved_gaps: 0\n\n## Open Action-Plan Decisions\n- renew-dropin-verdict: renew_stale_evidence\n\n## Invariants\n- git_worktree_clean: pass - Worktree is clean\n- git_pushed: pass - HEAD matches upstream\n- validation_gates: pass - validation status=pass\n- evidence_freshness: block - evidence freshness=stale\n- agent_mail_usable: pass - agent mail health=green semantic=pass\n- reservations_current: pass - No expired reservations\n- rch_available: pass - rch status=ok\n- action_plan_decisions: warn - 1 open action-plan decision(s)\n- completion_audit: pass - completion audit source=not_provided\n",
   "must_not_touch": [
     "Do not make strict release/drop-in claims from stale evidence."
   ],
@@ -110,6 +127,7 @@
   "source_statuses": {
     "action_plan": "open_decisions",
     "agent_mail": "green",
+    "completion_audit": "not_provided",
     "evidence_freshness": "stale",
     "git": "clean",
     "rch": "ok",
