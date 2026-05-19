@@ -20916,6 +20916,16 @@ if (typeof globalThis.Buffer === 'undefined') {
             }
             return value;
         }
+        static _compareBound(value, defaultValue, max, allowPastEnd) {
+            if (value === undefined) return defaultValue;
+            if (typeof value !== 'number') {
+                throw new TypeError('The compare range arguments must be numbers');
+            }
+            if (!Number.isInteger(value) || value < 0 || (!allowPastEnd && value > max)) {
+                throw new RangeError('Index out of range');
+            }
+            return value;
+        }
         static _checkedSize(size) {
             if (typeof size !== 'number') {
                 throw new TypeError('The size argument must be a number');
@@ -21140,10 +21150,10 @@ if (typeof globalThis.Buffer === 'undefined') {
         }
         compare(other, targetStart, targetEnd, sourceStart, sourceEnd) {
             if (!(other instanceof Uint8Array)) throw new TypeError('Argument must be a Buffer');
-            const ts = Buffer._fillStartBound(targetStart, 0);
-            const te = Buffer._writeBound(targetEnd, other.length, other.length);
-            const ss = Buffer._fillStartBound(sourceStart, 0);
-            const se = Buffer._writeBound(sourceEnd, this.length, this.length);
+            const ts = Buffer._compareBound(targetStart, 0, other.length, true);
+            const te = Buffer._compareBound(targetEnd, other.length, other.length, false);
+            const ss = Buffer._compareBound(sourceStart, 0, this.length, true);
+            const se = Buffer._compareBound(sourceEnd, this.length, this.length, false);
             return Buffer.compare(this.subarray(ss, se), other.subarray(ts, te));
         }
         copy(target, targetStart, sourceStart, sourceEnd) {

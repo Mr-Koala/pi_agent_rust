@@ -1624,6 +1624,38 @@ fn global_buffer_compare_invalid_range_vectors_match_node() {
 }
 
 #[test]
+fn global_buffer_compare_argument_type_validation_matches_node_vectors() {
+    let result = eval_global_buffer(
+        r#"(() => {
+        const cases = [
+            ["target_start_null", () => Buffer.from("abcd").compare(Buffer.from("abcd"), null, 4, 0, 4)],
+            ["target_start_object", () => Buffer.from("abcd").compare(Buffer.from("zabcd"), { valueOf() { return 1; } }, 5, 0, 4)],
+            ["target_start_array", () => Buffer.from("abcd").compare(Buffer.from("zabcd"), [1], 5, 0, 4)],
+            ["target_start_bad_string", () => Buffer.from("abcd").compare(Buffer.from("abcd"), "bad", 4, 0, 4)],
+            ["target_end_null", () => Buffer.from("abcd").compare(Buffer.from("abcd"), 0, null, 0, 4)],
+            ["source_start_null", () => Buffer.from("abcd").compare(Buffer.from("abcd"), 0, 4, null, 4)],
+            ["source_start_object", () => Buffer.from("zabcd").compare(Buffer.from("abcd"), 0, 4, { valueOf() { return 1; } }, 5)],
+            ["source_end_array", () => Buffer.from("abcd").compare(Buffer.from("ab"), 0, 2, 0, [1])],
+            ["target_start_fraction", () => Buffer.from("abcd").compare(Buffer.from("zzabcd"), 2.9, 6, 0, 4)],
+            ["target_start_nan", () => Buffer.from("abcd").compare(Buffer.from("abcd"), NaN, 4, 0, 4)],
+            ["source_end_fraction", () => Buffer.from("abcd").compare(Buffer.from("ab"), 0, 2, 0, 2.9)],
+        ];
+        return cases.map(([label, run]) => {
+            try {
+                return label + ":" + run();
+            } catch (e) {
+                return label + ":" + e.name;
+            }
+        }).join("|");
+    })()"#,
+    );
+    assert_eq!(
+        result,
+        "target_start_null:TypeError|target_start_object:TypeError|target_start_array:TypeError|target_start_bad_string:TypeError|target_end_null:TypeError|source_start_null:TypeError|source_start_object:TypeError|source_end_array:TypeError|target_start_fraction:RangeError|target_start_nan:RangeError|source_end_fraction:RangeError"
+    );
+}
+
+#[test]
 fn global_buffer_byte_swap_vectors_match_node() {
     let result = eval_global_buffer(
         r#"(() => {
