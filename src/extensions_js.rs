@@ -11340,7 +11340,7 @@ export function mkdtempSync(prefix, _opts) {
   const resolved = __pi_vfs.resolvePath(out, true);
   __pi_vfs.checkWorkspaceWriteAccess(resolved);
   __pi_vfs.ensureDir(resolved);
-  return __pi_vfs.normalizePath(out);
+  return out;
 }
 export function realpathSync(path, _opts) {
   return __pi_vfs.unmapExtensionTempPath(__pi_vfs.resolvePath(path, true));

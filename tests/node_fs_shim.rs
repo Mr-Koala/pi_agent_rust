@@ -276,7 +276,7 @@ fn readdir_sync_with_file_types() {
 
 #[test]
 fn readdir_sync_throws_on_missing() {
-    let result = eval_fs(r#"fs.readdirSync("/no/such/dir")"#);
+    let result = eval_fs(r#"fs.readdirSync("tmp/no/such/dir")"#);
     assert!(result.contains("ENOENT"), "expected ENOENT, got: {result}");
 }
 
@@ -406,12 +406,15 @@ fn mkdtemp_sync_creates_temp_dir() {
 }
 
 #[test]
-fn mkdtemp_sync_denies_outside_workspace() {
-    let result = eval_fs(r#"fs.mkdtempSync("/tmp/prefix-")"#);
-    assert!(
-        result.contains("host write denied"),
-        "expected host write denied, got: {result}"
+fn mkdtemp_sync_uses_virtual_absolute_tmp() {
+    let result = eval_fs(
+        r#"(() => {
+        const dir = fs.mkdtempSync("/tmp/prefix-");
+        fs.writeFileSync(`${dir}/probe.txt`, "ok");
+        return dir.startsWith("/tmp/prefix-") + ":" + fs.readFileSync(`${dir}/probe.txt`, "utf8");
+    })()"#,
     );
+    assert_eq!(result, "true:ok");
 }
 
 // ─── Callback-based async readFile ──────────────────────────────────────────
