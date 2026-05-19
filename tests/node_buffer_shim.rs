@@ -3,7 +3,7 @@
 //! Tests verify that `Buffer` follows Node.js semantics: `from`/`alloc`/`concat`
 //! factory methods, encoding/decoding (utf8, base64, hex, latin1), `isBuffer`,
 //! `byteLength`, `write`, `copy`, `compare`, `equals`, `indexOf`, `lastIndexOf`,
-//! `includes`, `fill`, `toJSON`, `slice`, and integer read/write methods.
+//! `includes`, `fill`, `toJSON`, `slice`, byte swaps, and integer read/write methods.
 
 mod common;
 
@@ -492,6 +492,34 @@ fn last_index_of_vectors_match_node() {
     );
 }
 
+#[test]
+fn byte_swap_vectors_match_node() {
+    let result = eval_buffer(
+        r#"(() => {
+        const cases = [
+            ["swap16_ok", () => Buffer.from([1, 2, 3, 4]).swap16().toString("hex")],
+            ["swap16_self", () => { const b = Buffer.from([1, 2]); return b.swap16() === b; }],
+            ["swap16_bad", () => Buffer.from([1, 2, 3]).swap16()],
+            ["swap32_ok", () => Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]).swap32().toString("hex")],
+            ["swap32_bad", () => Buffer.from([1, 2]).swap32()],
+            ["swap64_ok", () => Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]).swap64().toString("hex")],
+            ["swap64_bad", () => Buffer.from([1, 2, 3, 4]).swap64()],
+        ];
+        return cases.map(([label, run]) => {
+            try {
+                return label + ":" + run();
+            } catch (e) {
+                return label + ":" + e.name;
+            }
+        }).join("|");
+    })()"#,
+    );
+    assert_eq!(
+        result,
+        "swap16_ok:02010403|swap16_self:true|swap16_bad:RangeError|swap32_ok:0403020108070605|swap32_bad:RangeError|swap64_ok:0807060504030201|swap64_bad:RangeError"
+    );
+}
+
 // ─── buf.fill ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -890,6 +918,34 @@ fn global_buffer_compare_range_vectors_match_node() {
     assert_eq!(
         result,
         "range_equal:0|range_less:-1|range_greater:1|empty_slices:0|uint8_range:0"
+    );
+}
+
+#[test]
+fn global_buffer_byte_swap_vectors_match_node() {
+    let result = eval_global_buffer(
+        r#"(() => {
+        const cases = [
+            ["swap16_ok", () => Buffer.from([1, 2, 3, 4]).swap16().toString("hex")],
+            ["swap16_self", () => { const b = Buffer.from([1, 2]); return b.swap16() === b; }],
+            ["swap16_bad", () => Buffer.from([1, 2, 3]).swap16()],
+            ["swap32_ok", () => Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]).swap32().toString("hex")],
+            ["swap32_bad", () => Buffer.from([1, 2]).swap32()],
+            ["swap64_ok", () => Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]).swap64().toString("hex")],
+            ["swap64_bad", () => Buffer.from([1, 2, 3, 4]).swap64()],
+        ];
+        return cases.map(([label, run]) => {
+            try {
+                return label + ":" + run();
+            } catch (e) {
+                return label + ":" + e.name;
+            }
+        }).join("|");
+    })()"#,
+    );
+    assert_eq!(
+        result,
+        "swap16_ok:02010403|swap16_self:true|swap16_bad:RangeError|swap32_ok:0403020108070605|swap32_bad:RangeError|swap64_ok:0807060504030201|swap64_bad:RangeError"
     );
 }
 

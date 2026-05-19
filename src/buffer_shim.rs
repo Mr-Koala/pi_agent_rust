@@ -4,7 +4,7 @@
 //! encoding/decoding (utf8, base64, hex, ascii, latin1), static factory methods
 //! (`from`, `alloc`, `concat`, `isBuffer`, `byteLength`), and instance methods
 //! (`toString`, `write`, `slice`, `copy`, `compare`, `equals`, `indexOf`,
-//! `lastIndexOf`, `includes`, `fill`, `toJSON`).
+//! `lastIndexOf`, `includes`, `fill`, `swap16`, `swap32`, `swap64`, `toJSON`).
 
 /// The JS source for the `node:buffer` virtual module.
 pub const NODE_BUFFER_JS: &str = r#"
@@ -449,6 +449,18 @@ class Buffer extends Uint8Array {
       const t0 = this[i], t1 = this[i + 1];
       this[i] = this[i + 3]; this[i + 1] = this[i + 2];
       this[i + 2] = t1; this[i + 3] = t0;
+    }
+    return this;
+  }
+
+  swap64() {
+    if (this.length % 8 !== 0) throw new RangeError('Buffer size must be a multiple of 64-bits');
+    for (let i = 0; i < this.length; i += 8) {
+      const t0 = this[i], t1 = this[i + 1], t2 = this[i + 2], t3 = this[i + 3];
+      this[i] = this[i + 7]; this[i + 1] = this[i + 6];
+      this[i + 2] = this[i + 5]; this[i + 3] = this[i + 4];
+      this[i + 4] = t3; this[i + 5] = t2;
+      this[i + 6] = t1; this[i + 7] = t0;
     }
     return this;
   }
