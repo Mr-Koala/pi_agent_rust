@@ -20856,7 +20856,7 @@ if (typeof globalThis.Buffer === 'undefined') {
             if (offset > length) return length;
             return offset;
         }
-        static from(input, encoding) {
+        static from(input, encoding, length) {
             if (typeof input === 'string') {
                 const enc = __pi_buffer_normalize_encoding(encoding);
                 if (enc === 'base64') {
@@ -20882,8 +20882,11 @@ if (typeof globalThis.Buffer === 'undefined') {
                 return out;
             }
             if (input instanceof ArrayBuffer) {
-                const out = new Buffer(input.byteLength);
-                out.set(new Uint8Array(input));
+                const offset = encoding || 0;
+                const len = length !== undefined ? length : input.byteLength - offset;
+                const view = new Uint8Array(input, offset, len);
+                const out = new Buffer(view.byteLength);
+                out.set(view);
                 return out;
             }
             if (ArrayBuffer.isView && ArrayBuffer.isView(input)) {

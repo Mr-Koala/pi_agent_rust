@@ -698,6 +698,35 @@ fn global_buffer_string_and_buffer_fill_match_node_vectors() {
 }
 
 #[test]
+fn global_buffer_arraybuffer_offset_length_match_node_vectors() {
+    let result = eval_global_buffer(
+        r#"(() => {
+        const ab = new Uint8Array([1, 2, 3, 4, 5]).buffer;
+        const cases = [];
+        for (const [label, args] of [
+            ["all", [ab]],
+            ["offset", [ab, 1]],
+            ["offset_len", [ab, 1, 2]],
+            ["oversize_len", [ab, 4, 99]],
+            ["negative_offset", [ab, -1]],
+            ["oob_offset", [ab, 6]],
+        ]) {
+            try {
+                cases.push(label + ":" + Buffer.from(...args).toString("hex"));
+            } catch (e) {
+                cases.push(label + ":" + e.name);
+            }
+        }
+        return cases.join("|");
+    })()"#,
+    );
+    assert_eq!(
+        result,
+        "all:0102030405|offset:02030405|offset_len:0203|oversize_len:RangeError|negative_offset:RangeError|oob_offset:RangeError"
+    );
+}
+
+#[test]
 fn global_buffer_unknown_encoding_strict_entrypoints_match_node() {
     let result = eval_global_buffer(
         r#"(() => {
