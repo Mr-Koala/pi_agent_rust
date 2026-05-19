@@ -1781,6 +1781,48 @@ fn global_buffer_integer_bounds_vectors_match_node() {
 }
 
 #[test]
+fn global_buffer_integer_write_value_range_validation_matches_node_vectors() {
+    let result = eval_global_buffer(
+        r#"(() => {
+        const cases = [
+            ["u8_ok", () => { const b = Buffer.alloc(1); return b.writeUInt8(255, 0) + ":" + b.toString("hex"); }],
+            ["u8_neg", () => { const b = Buffer.alloc(1); return b.writeUInt8(-1, 0) + ":" + b.toString("hex"); }],
+            ["u8_oob", () => { const b = Buffer.alloc(1); return b.writeUInt8(256, 0) + ":" + b.toString("hex"); }],
+            ["u8_fraction", () => { const b = Buffer.alloc(1); return b.writeUInt8(1.9, 0) + ":" + b.toString("hex"); }],
+            ["u8_nan", () => { const b = Buffer.alloc(1); return b.writeUInt8(NaN, 0) + ":" + b.toString("hex"); }],
+            ["u8_string", () => { const b = Buffer.alloc(1); return b.writeUInt8("1", 0) + ":" + b.toString("hex"); }],
+            ["u8_infinity", () => { const b = Buffer.alloc(1); return b.writeUInt8(Infinity, 0) + ":" + b.toString("hex"); }],
+            ["u8_bigint", () => { const b = Buffer.alloc(1); return b.writeUInt8(1n, 0) + ":" + b.toString("hex"); }],
+            ["i8_ok_neg", () => { const b = Buffer.alloc(1); return b.writeInt8(-1, 0) + ":" + b.toString("hex"); }],
+            ["i8_low", () => { const b = Buffer.alloc(1); return b.writeInt8(-129, 0) + ":" + b.toString("hex"); }],
+            ["i8_high", () => { const b = Buffer.alloc(1); return b.writeInt8(128, 0) + ":" + b.toString("hex"); }],
+            ["u16_ok", () => { const b = Buffer.alloc(2); return b.writeUInt16LE(65535, 0) + ":" + b.toString("hex"); }],
+            ["u16_oob", () => { const b = Buffer.alloc(2); return b.writeUInt16LE(65536, 0) + ":" + b.toString("hex"); }],
+            ["i16_ok_neg", () => { const b = Buffer.alloc(2); return b.writeInt16BE(-2, 0) + ":" + b.toString("hex"); }],
+            ["i16_low", () => { const b = Buffer.alloc(2); return b.writeInt16BE(-32769, 0) + ":" + b.toString("hex"); }],
+            ["i16_high", () => { const b = Buffer.alloc(2); return b.writeInt16BE(32768, 0) + ":" + b.toString("hex"); }],
+            ["u32_ok", () => { const b = Buffer.alloc(4); return b.writeUInt32BE(4294967295, 0) + ":" + b.toString("hex"); }],
+            ["u32_oob", () => { const b = Buffer.alloc(4); return b.writeUInt32BE(4294967296, 0) + ":" + b.toString("hex"); }],
+            ["i32_ok_neg", () => { const b = Buffer.alloc(4); return b.writeInt32LE(-2, 0) + ":" + b.toString("hex"); }],
+            ["i32_low", () => { const b = Buffer.alloc(4); return b.writeInt32LE(-2147483649, 0) + ":" + b.toString("hex"); }],
+            ["i32_high", () => { const b = Buffer.alloc(4); return b.writeInt32LE(2147483648, 0) + ":" + b.toString("hex"); }],
+        ];
+        return cases.map(([label, run]) => {
+            try {
+                return label + ":" + run();
+            } catch (e) {
+                return label + ":" + e.name;
+            }
+        }).join("|");
+    })()"#,
+    );
+    assert_eq!(
+        result,
+        "u8_ok:1:ff|u8_neg:RangeError|u8_oob:RangeError|u8_fraction:1:01|u8_nan:1:00|u8_string:1:01|u8_infinity:RangeError|u8_bigint:TypeError|i8_ok_neg:1:ff|i8_low:RangeError|i8_high:RangeError|u16_ok:2:ffff|u16_oob:RangeError|i16_ok_neg:2:fffe|i16_low:RangeError|i16_high:RangeError|u32_ok:4:ffffffff|u32_oob:RangeError|i32_ok_neg:4:feffffff|i32_low:RangeError|i32_high:RangeError"
+    );
+}
+
+#[test]
 fn global_buffer_integer_offset_argument_validation_matches_node_vectors() {
     let result = eval_global_buffer(
         r#"(() => {
