@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +28,10 @@ DEFAULT_SOURCE_BEAD = "bd-4w2mw.2"
 DEFAULT_SCHEDULER_PATH = Path("docs/evidence/validation-scheduler-plan.json")
 DEFAULT_PROOF_MEMORY_PATH = Path("docs/evidence/validation-proof-memory-index.json")
 DEFAULT_BEADS_PATH = Path(".beads/issues.jsonl")
+GOLDEN_ROOT = Path("tests/golden_corpus/semantic_validation_route")
+ROUTE_PLAN_GOLDEN = "route_plan_projection.json"
+NO_MOCK_GOLDEN = "no_mock_git_beads_projection.json"
+UPDATE_GOLDEN_ENV = "UPDATE_SEMANTIC_ROUTE_GOLDEN"
 
 REQUIRED_TOP_LEVEL_KEYS = (
     "schema",
@@ -1295,6 +1301,320 @@ def no_overwrite_write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def golden_path(filename: str) -> Path:
+    return Path(__file__).resolve().parent.parent / GOLDEN_ROOT / filename
+
+
+def assert_named_golden(payload: dict[str, Any], *, filename: str, label: str) -> None:
+    path = golden_path(filename)
+    text = json_dumps(payload, pretty=True)
+    if os.environ.get(UPDATE_GOLDEN_ENV) == "1":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return
+    try:
+        expected = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise RoutePlanError(
+            f"missing {label} golden: {path}; rerun with {UPDATE_GOLDEN_ENV}=1"
+        ) from exc
+    if text != expected:
+        raise RoutePlanError(
+            f"{label} golden mismatch: {path}; rerun with {UPDATE_GOLDEN_ENV}=1 "
+            "only after reviewing the semantic route diff"
+        )
+
+
+def command_projection(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "rank": item.get("rank"),
+            "group_id": item.get("group_id"),
+            "action": item.get("action"),
+            "command": item.get("command"),
+            "requires_rch": item.get("requires_rch"),
+            "local_fallback_rejection_reason": item.get(
+                "local_fallback_rejection_reason"
+            ),
+            "reasons": item.get("reasons") or [],
+        }
+        for item in items
+    ]
+
+
+def canonical_plan_projection(plan: dict[str, Any]) -> dict[str, Any]:
+    coordination = plan["coordination_admission"]
+    proof = plan["proof_memory_assessment"]
+    obligations = plan["proof_obligations"]
+    cache_heat = plan["cache_heat"]
+    coalescing = plan["coalescing_advice"]
+    classification = plan["changed_path_classification"]
+    boundaries = plan["claim_boundaries"]
+    return {
+        "schema": plan["schema"],
+        "status": plan["status"],
+        "decision": plan["decision"],
+        "source_bead": plan["source_bead"],
+        "changed_paths": plan["inputs"]["changed_paths"],
+        "classification": {
+            "profile_id": classification["profile_id"],
+            "bucket_counts": classification["bucket_counts"],
+            "unknown_paths": classification["unknown_paths"],
+        },
+        "proof_obligations": {
+            "required_group_ids": obligations["required_group_ids"],
+            "heavy_group_count": obligations["heavy_group_count"],
+            "groups": [
+                {
+                    "group_id": item.get("group_id"),
+                    "requires_rch": item.get("requires_rch"),
+                    "no_local_fallback": item.get("no_local_fallback"),
+                    "command_count": len(item.get("exact_commands") or []),
+                    "scheduler_action": item.get("scheduler_action"),
+                    "local_fallback_rejection_reason": item.get(
+                        "local_fallback_rejection_reason"
+                    ),
+                }
+                for item in obligations["groups"]
+            ],
+        },
+        "proof_memory": {
+            "route_decision": proof["route_decision"],
+            "classification_counts": proof["classification_counts"],
+            "invalidation_reasons": proof["invalidation_reasons"],
+            "reusable_record_count": len(proof["reusable_records"]),
+        },
+        "cache_heat": {
+            "route_heat_level": cache_heat["route_heat_level"],
+            "heavy_group_ids": cache_heat["heavy_group_ids"],
+            "shared_rch_env_present": bool(cache_heat["shared_rch_env"]),
+        },
+        "coalescing_advice": {
+            "recommended_order": [
+                {
+                    "rank": item.get("rank"),
+                    "group_id": item.get("group_id"),
+                    "requires_rch": item.get("requires_rch"),
+                }
+                for item in coalescing["recommended_order"]
+            ],
+            "advisory_only": coalescing["advisory_only"],
+        },
+        "coordination": {
+            "status": coordination["status"],
+            "recommended_action": coordination["recommended_action"],
+            "thread_id_hint": coordination["thread_id_hint"],
+            "reservation_reason_hint": coordination["reservation_reason_hint"],
+            "reasons": coordination["reasons"],
+        },
+        "would_run_order": command_projection(plan["would_run_order"]),
+        "deferred_or_blocked": command_projection(plan["deferred_or_blocked"]),
+        "negative_control_ids": [item["id"] for item in plan["negative_controls"]],
+        "summary": plan["summary"],
+        "claim_boundaries": {
+            "read_only": boundaries["read_only"],
+            "does_not_execute_commands": boundaries["does_not_execute_commands"],
+            "does_not_launch_rch": boundaries["does_not_launch_rch"],
+            "does_not_mutate_agent_mail": boundaries["does_not_mutate_agent_mail"],
+            "does_not_mutate_beads": boundaries["does_not_mutate_beads"],
+            "does_not_delete_files": boundaries["does_not_delete_files"],
+            "advisory_evidence_as_source_of_truth_authorized": boundaries[
+                "advisory_evidence_as_source_of_truth_authorized"
+            ],
+        },
+    }
+
+
+def expect_route_plan_rejected(plan: dict[str, Any], control_id: str) -> dict[str, str]:
+    try:
+        validate_plan_shape(plan)
+    except RoutePlanError as exc:
+        return {"id": control_id, "status": "pass", "reason": str(exc)}
+    return {"id": control_id, "status": "fail", "reason": "route plan was accepted"}
+
+
+def negative_control_results(base_plan: dict[str, Any]) -> list[dict[str, str]]:
+    advisory_authority = json.loads(json_dumps(base_plan, pretty=False))
+    advisory_authority["claim_boundaries"][
+        "advisory_evidence_as_source_of_truth_authorized"
+    ] = True
+
+    deletion_authority = json.loads(json_dumps(base_plan, pretty=False))
+    deletion_authority["claim_boundaries"]["does_not_delete_files"] = False
+
+    local_fallback = json.loads(json_dumps(base_plan, pretty=False))
+    for group in local_fallback["proof_obligations"]["groups"]:
+        if group.get("requires_rch"):
+            group["exact_commands"] = ["cargo check --all-targets"]
+            group["local_fallback_rejection_reason"] = None
+            break
+
+    missing_scheduler = build_route_plan(
+        changed_paths=["src/providers/openai.rs"],
+        scheduler=None,
+        scheduler_source={"path": "missing-fixture", "status": "missing", "reason": "fixture missing"},
+        proof_memory=fixture_proof_memory(),
+        proof_memory_source={"path": "fixture", "status": "loaded"},
+        beads_summary={"source_status": "fixture", "open_count": 1, "ready_count": 1, "in_progress_count": 0},
+        agent_mail_health={"health_level": "green", "status": "ok"},
+        generated_at="2026-05-19T00:00:00+00:00",
+        source_bead=DEFAULT_SOURCE_BEAD,
+    )
+
+    stale_proof = build_route_plan(
+        changed_paths=["src/providers/openai.rs"],
+        scheduler=fixture_scheduler(),
+        scheduler_source={"path": "fixture", "status": "loaded"},
+        proof_memory=fixture_proof_memory(reusable=False),
+        proof_memory_source={"path": "fixture", "status": "loaded"},
+        beads_summary={"source_status": "fixture", "open_count": 1, "ready_count": 1, "in_progress_count": 0},
+        agent_mail_health={"health_level": "green", "status": "ok"},
+        generated_at="2026-05-19T00:00:00+00:00",
+        source_bead=DEFAULT_SOURCE_BEAD,
+    )
+
+    results = [
+        expect_route_plan_rejected(
+            advisory_authority,
+            "advisory_route_as_authority_rejected",
+        ),
+        expect_route_plan_rejected(deletion_authority, "file_deletion_authority_rejected"),
+        expect_route_plan_rejected(local_fallback, "local_heavy_cargo_fallback_rejected"),
+        {
+            "id": "missing_scheduler_source_blocks_ready",
+            "status": "pass" if missing_scheduler["status"] == "blocked" else "fail",
+            "reason": f"status={missing_scheduler['status']}",
+        },
+        {
+            "id": "stale_proof_memory_blocks_reuse",
+            "status": "pass"
+            if stale_proof["proof_memory_assessment"]["route_decision"]
+            == "refresh_validation"
+            and stale_proof["status"] != "ready"
+            else "fail",
+            "reason": (
+                "route_decision="
+                f"{stale_proof['proof_memory_assessment']['route_decision']}; "
+                f"status={stale_proof['status']}"
+            ),
+        },
+    ]
+    return results
+
+
+def run_git(workspace: Path, *args: str) -> None:
+    result = subprocess.run(
+        ("git", *args),
+        cwd=workspace,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RoutePlanError(
+            f"git {' '.join(args)} failed in {workspace}: {result.stderr.strip()}"
+        )
+
+
+def write_json_line(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def run_no_mock_git_beads_smoke() -> dict[str, Any]:
+    tmp_base = Path(os.environ.get("TMPDIR") or "/data/tmp")
+    if not tmp_base.exists():
+        tmp_base = Path(tempfile.gettempdir())
+    workspace = Path(tempfile.mkdtemp(prefix="pi_semantic_route_no_mock_", dir=tmp_base))
+    (workspace / "docs").mkdir(parents=True, exist_ok=True)
+    (workspace / "scripts").mkdir(parents=True, exist_ok=True)
+    (workspace / ".beads").mkdir(parents=True, exist_ok=True)
+    (workspace / "docs/swarm-operations-runbook.md").write_text(
+        "baseline runbook\n",
+        encoding="utf-8",
+    )
+    (workspace / "scripts/plan_semantic_validation_route.py").write_text(
+        "print('baseline')\n",
+        encoding="utf-8",
+    )
+    write_json_line(
+        workspace / ".beads/issues.jsonl",
+        {
+            "id": "bd-no-mock",
+            "title": "No-mock semantic route fixture",
+            "status": "open",
+            "priority": 2,
+            "updated_at": "2026-05-19T00:00:00Z",
+        },
+    )
+    run_git(workspace, "init")
+    run_git(workspace, "config", "user.email", "semantic-route@example.invalid")
+    run_git(workspace, "config", "user.name", "Semantic Route Fixture")
+    run_git(workspace, "config", "commit.gpgsign", "false")
+    run_git(workspace, "add", ".")
+    run_git(workspace, "commit", "--no-verify", "-m", "baseline")
+    (workspace / "docs/swarm-operations-runbook.md").write_text(
+        "baseline runbook\nsemantic route docs update\n",
+        encoding="utf-8",
+    )
+    (workspace / "scripts/plan_semantic_validation_route.py").write_text(
+        "print('baseline')\nprint('route update')\n",
+        encoding="utf-8",
+    )
+    run_git(workspace, "add", "scripts/plan_semantic_validation_route.py")
+    changed_paths = git_changed_paths(workspace)
+    beads_summary = load_beads_summary(workspace / ".beads/issues.jsonl")
+    plan = build_route_plan(
+        changed_paths=changed_paths,
+        scheduler=fixture_scheduler(),
+        scheduler_source={"path": "fixture-validation-scheduler-plan.json", "status": "loaded"},
+        proof_memory=fixture_proof_memory(reusable=False),
+        proof_memory_source={"path": "fixture-proof-memory-index.json", "status": "loaded"},
+        beads_summary=beads_summary,
+        agent_mail_health={"health_level": "green", "status": "ok"},
+        generated_at="2026-05-19T00:00:00+00:00",
+        source_bead="bd-no-mock",
+    )
+    return {
+        "schema": "pi.validation.semantic_route_plan.no_mock_git_beads.v1",
+        "status": "pass" if plan["status"] == "degraded" else "fail",
+        "workspace_kind": "temporary_git_repo_with_beads_jsonl",
+        "workspace_path_redacted": "[TMP]/pi_semantic_route_no_mock_*",
+        "changed_paths_from_git": changed_paths,
+        "beads_source_status": beads_summary["source_status"],
+        "beads_open_count": beads_summary["open_count"],
+        "agent_mail_source": "fixture_health_green",
+        "rch_source": "fixture_scheduler_with_rch_groups",
+        "proof_memory_source": "fixture_stale_proof_memory",
+        "assertions": [
+            {
+                "id": "git_changed_paths_read_from_temp_repo",
+                "status": "pass"
+                if changed_paths
+                == [
+                    "docs/swarm-operations-runbook.md",
+                    "scripts/plan_semantic_validation_route.py",
+                ]
+                else "fail",
+            },
+            {
+                "id": "beads_jsonl_loaded_from_temp_workspace",
+                "status": "pass" if beads_summary["open_count"] == 1 else "fail",
+            },
+            {
+                "id": "stale_proof_keeps_route_degraded",
+                "status": "pass" if plan["status"] == "degraded" else "fail",
+            },
+            {
+                "id": "no_heavy_cargo_invoked_by_smoke",
+                "status": "pass" if plan["summary"]["heavy_group_count"] == 0 else "fail",
+            },
+        ],
+        "plan": canonical_plan_projection(plan),
+    }
+
+
 def fixture_scheduler(*, heavy_allowed: bool = True) -> dict[str, Any]:
     groups = []
     for group in FALLBACK_GROUPS:
@@ -1365,6 +1685,24 @@ def run_self_test() -> dict[str, Any]:
             "expect_coordination_status": "ready",
         },
         {
+            "id": "session_rust",
+            "paths": ["src/session.rs"],
+            "scheduler": fixture_scheduler(),
+            "proof": fixture_proof_memory(),
+            "expect_status": {"degraded"},
+            "expect_bucket": "session",
+            "expect_heat": "high",
+        },
+        {
+            "id": "extension_rust",
+            "paths": ["src/extensions.rs", "src/extensions_js.rs"],
+            "scheduler": fixture_scheduler(),
+            "proof": fixture_proof_memory(),
+            "expect_status": {"degraded"},
+            "expect_bucket": "extension",
+            "expect_heat": "high",
+        },
+        {
             "id": "mixed_python_rust",
             "paths": ["src/doctor.rs", "scripts/new-tool.py"],
             "scheduler": fixture_scheduler(),
@@ -1372,6 +1710,18 @@ def run_self_test() -> dict[str, Any]:
             "expect_status": {"degraded"},
             "expect_bucket": "scripts_docs_evidence",
             "expect_heat": "high",
+        },
+        {
+            "id": "mixed_docs_evidence",
+            "paths": [
+                "docs/swarm-operations-runbook.md",
+                "docs/evidence/semantic-validation-route-inventory.json",
+            ],
+            "scheduler": fixture_scheduler(),
+            "proof": fixture_proof_memory(),
+            "expect_status": {"degraded"},
+            "expect_bucket": "scripts_docs_evidence",
+            "expect_heat": "low",
         },
         {
             "id": "agent_mail_degraded_read_only",
@@ -1498,6 +1848,18 @@ def run_self_test() -> dict[str, Any]:
         },
     ]
     results: list[dict[str, Any]] = []
+    route_projection: dict[str, Any] = {
+        "schema": "pi.validation.semantic_route_plan.golden_projection.v1",
+        "golden_confidence": {
+            "deterministic": True,
+            "platform_dependent": False,
+            "volatility": 2,
+            "strategy": "canonicalized_json_without_timestamps_or_temp_paths",
+        },
+        "cases": {},
+        "negative_controls": [],
+    }
+    provider_plan: dict[str, Any] | None = None
     for case in cases:
         plan = build_route_plan(
             changed_paths=case["paths"],
@@ -1513,6 +1875,9 @@ def run_self_test() -> dict[str, Any]:
             generated_at="2026-05-19T00:00:00+00:00",
             source_bead=DEFAULT_SOURCE_BEAD,
         )
+        if case["id"] == "provider_rust":
+            provider_plan = plan
+        route_projection["cases"][case["id"]] = canonical_plan_projection(plan)
         buckets = set(plan["changed_path_classification"]["bucket_counts"])
         assertions = [
             {
@@ -1575,13 +1940,51 @@ def run_self_test() -> dict[str, Any]:
                 "summary": plan["summary"],
             }
         )
-    status = "pass" if all(item["status"] == "pass" for item in results) else "fail"
+    if provider_plan is None:
+        raise RoutePlanError("self-test did not build provider_rust plan")
+    negative_results = negative_control_results(provider_plan)
+    route_projection["negative_controls"] = negative_results
+    no_mock_projection = run_no_mock_git_beads_smoke()
+    assert_named_golden(
+        route_projection,
+        filename=ROUTE_PLAN_GOLDEN,
+        label="semantic route plan projection",
+    )
+    assert_named_golden(
+        no_mock_projection,
+        filename=NO_MOCK_GOLDEN,
+        label="semantic route no-mock git/beads projection",
+    )
+    status = (
+        "pass"
+        if all(item["status"] == "pass" for item in results)
+        and all(item["status"] == "pass" for item in negative_results)
+        and no_mock_projection["status"] == "pass"
+        and all(
+            item["status"] == "pass"
+            for item in no_mock_projection.get("assertions", [])
+            if isinstance(item, dict)
+        )
+        else "fail"
+    )
     return {
         "schema": "pi.validation.semantic_route_plan.self_test.v1",
         "generated_at": utc_now_iso(),
         "status": status,
         "case_count": len(results),
         "results": results,
+        "negative_controls": negative_results,
+        "golden_artifacts": [
+            str(GOLDEN_ROOT / ROUTE_PLAN_GOLDEN),
+            str(GOLDEN_ROOT / NO_MOCK_GOLDEN),
+        ],
+        "no_mock_integration": {
+            "schema": no_mock_projection["schema"],
+            "status": no_mock_projection["status"],
+            "changed_paths_from_git": no_mock_projection["changed_paths_from_git"],
+            "beads_open_count": no_mock_projection["beads_open_count"],
+            "assertions": no_mock_projection["assertions"],
+        },
     }
 
 
