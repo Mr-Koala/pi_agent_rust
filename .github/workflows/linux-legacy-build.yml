@@ -33,11 +33,13 @@ jobs:
         include:
           # 目标 1：glibc 2.17 基线，面向 CentOS 7.x 兼容。
           - target: x86_64-unknown-linux-gnu.2.17
+            rust_target: x86_64-unknown-linux-gnu
             asset_name: pi-linux-amd64-glibc217
             archive_ext: tar.xz
 
           # 目标 2：musl 静态链接兜底包，最大化跨发行版可运行性。
           - target: x86_64-unknown-linux-musl
+            rust_target: x86_64-unknown-linux-musl
             asset_name: pi-linux-amd64-musl
             archive_ext: tar.xz
 
@@ -86,6 +88,13 @@ jobs:
           set -euxo pipefail
           cargo install cargo-zigbuild --locked
 
+      - name: Add Rust target
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # cargo-zigbuild 仍要求先安装 Rust 标准库目标。
+          rustup target add "${{ matrix.rust_target }}"
+
       - name: Build release binary with zig linker
         shell: bash
         run: |
@@ -106,7 +115,28 @@ jobs:
         run: |
           set -euxo pipefail
 
-          BIN_PATH="target/${{ matrix.target }}/release/pi"
+          TARGET="${{ matrix.target }}"
+          RUST_TARGET="${{ matrix.rust_target }}"
+
+          # cargo-zigbuild 在带 glibc 后缀的 target 下，输出目录在不同版本中
+          # 可能是 target/<full-target>/release 或 target/<rust-target>/release。
+          # 这里做双路径探测，避免因为目录命名差异导致误报失败。
+          BIN_PATH=""
+          for CANDIDATE in \
+            "target/${TARGET}/release/pi" \
+            "target/${RUST_TARGET}/release/pi"
+          do
+            if [ -x "$CANDIDATE" ]; then
+              BIN_PATH="$CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$BIN_PATH" ]; then
+            echo "::error::cannot find built binary in expected target directories"
+            find target -maxdepth 4 -type f -name pi -path "*/release/pi" || true
+            exit 1
+          fi
 
           # 从导出符号中提取 GLIBC_* 版本，确保最高版本不超过 2.17。
           MAX_GLIBC="$(objdump -T "$BIN_PATH" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V | tail -n1 || true)"
@@ -133,13 +163,31 @@ jobs:
 
           VERSION="${GITHUB_SHA::7}"
           TARGET="${{ matrix.target }}"
+          RUST_TARGET="${{ matrix.rust_target }}"
           ASSET="${{ matrix.asset_name }}"
 
           mkdir -p dist
           STAGE_DIR="pi-${VERSION}-${TARGET}"
           mkdir -p "$STAGE_DIR"
 
-          cp "target/${TARGET}/release/pi" "$STAGE_DIR/"
+          BIN_PATH=""
+          for CANDIDATE in \
+            "target/${TARGET}/release/pi" \
+            "target/${RUST_TARGET}/release/pi"
+          do
+            if [ -x "$CANDIDATE" ]; then
+              BIN_PATH="$CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$BIN_PATH" ]; then
+            echo "::error::cannot find built binary in expected target directories"
+            find target -maxdepth 4 -type f -name pi -path "*/release/pi" || true
+            exit 1
+          fi
+
+          cp "$BIN_PATH" "$STAGE_DIR/"
           cp LICENSE "$STAGE_DIR/" 2>/dev/null || true
           cp README.md "$STAGE_DIR/" 2>/dev/null || true
 
