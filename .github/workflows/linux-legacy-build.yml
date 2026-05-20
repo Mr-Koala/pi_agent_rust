@@ -100,14 +100,29 @@ jobs:
         run: |
           set -euxo pipefail
 
+          # 某些 C/Tree-sitter 依赖在 zig 默认缓存目录下会偶发出现中间产物丢失。
+          # 这里为每个目标隔离缓存目录，并在失败时自动重试一次，降低偶发失败率。
+          export ZIG_LOCAL_CACHE_DIR="${PWD}/.zig-cache-${{ matrix.target }}"
+          mkdir -p "${ZIG_LOCAL_CACHE_DIR}"
+
           # 使用 zig 进行链接控制：
           # - gnu.2.17 目标可显式约束 glibc 符号版本上限。
           # - musl 目标用于提供静态链接兜底包。
-          cargo zigbuild \
-            --release \
-            --locked \
-            --bin pi \
-            --target "${{ matrix.target }}"
+          for ATTEMPT in 1 2; do
+            if cargo zigbuild \
+              --release \
+              --locked \
+              --bin pi \
+              --target "${{ matrix.target }}"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq 2 ]; then
+              echo "::error::cargo zigbuild failed after retry"
+              exit 1
+            fi
+            echo "::warning::cargo zigbuild failed on attempt ${ATTEMPT}, retrying once..."
+            sleep 5
+          done
 
       - name: Verify glibc floor for gnu artifact
         if: matrix.target == 'x86_64-unknown-linux-gnu.2.17'
