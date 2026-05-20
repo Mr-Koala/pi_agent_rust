@@ -550,6 +550,24 @@ Notable installer flags:
 - `--artifact-url` without `--version` uses a synthetic tag for release mode only; if artifact download fails, install exits instead of attempting source fallback
 - Installer honors `HTTPS_PROXY` / `HTTP_PROXY` for all network fetches
 
+### Legacy Linux Build Artifacts (CentOS 7.x / Older glibc hosts)
+
+For older Linux environments we maintain a dedicated compatibility workflow:
+
+- Workflow: `.github/workflows/linux-legacy-build.yml`
+- Targets:
+  - `x86_64-unknown-linux-gnu.2.17` (artifact: `pi-linux-amd64-glibc217`)
+  - `x86_64-unknown-linux-musl` (artifact: `pi-linux-amd64-musl`)
+- Trigger mode:
+  - `workflow_dispatch` for manual builds
+  - `push` to `main` when workflow/build config paths change
+
+Compatibility policy:
+
+- Prefer the `glibc217` artifact for old glibc systems (CentOS 7.x baseline).
+- Use the `musl` artifact as a static fallback when glibc compatibility is unknown.
+- CI enforces a fail-closed glibc symbol ceiling check for the `gnu.2.17` target.
+
 By default, the installer also installs a `pi-agent-rust` skill for both Claude Code and Codex CLI:
 - Claude Code: `~/.claude/skills/pi-agent-rust/SKILL.md`
 - Codex CLI: `~/.codex/skills/pi-agent-rust/SKILL.md` (or `$CODEX_HOME/skills/pi-agent-rust/SKILL.md` if `CODEX_HOME` is set)
@@ -586,6 +604,23 @@ pi --help >/dev/null
 # If a TS migration was performed, legacy command remains available
 command -v legacy-pi && legacy-pi --version
 ```
+
+### How To Add More Linux Version Support
+
+When you need support for additional Linux targets, extend
+`.github/workflows/linux-legacy-build.yml` first (keep this isolated from
+cross-platform release jobs unless there is an explicit release requirement).
+
+Recommended steps:
+
+1. Add a new matrix entry (`target`, `rust_target`, `asset_name`).
+2. Keep target installation explicit (`rustup target add`).
+3. Use `cargo-zigbuild` for glibc-pinned targets and keep an optional musl fallback.
+4. Add/adjust compatibility checks:
+   - glibc targets: validate exported `GLIBC_*` symbol ceiling.
+   - musl/static targets: validate runtime startup on representative hosts.
+5. Run workflow validation via `workflow_dispatch`.
+6. Promote the new artifact into release automation only after successful host smoke tests.
 
 ### From Source
 
