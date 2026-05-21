@@ -131,19 +131,41 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            rust_target: x86_64-unknown-linux-gnu
             asset: pi-linux-amd64
+            build_tool: cargo
+          # 老 Linux 兼容包：glibc 2.17 基线（CentOS 7.x）
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu.2.17
+            rust_target: x86_64-unknown-linux-gnu
+            asset: pi-linux-amd64-glibc217
+            build_tool: zig
+          # 老 Linux 兜底包：musl 静态链接，规避 glibc 版本差异
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            rust_target: x86_64-unknown-linux-musl
+            asset: pi-linux-amd64-musl
+            build_tool: zig
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            rust_target: aarch64-unknown-linux-gnu
             asset: pi-linux-arm64
+            build_tool: cargo
           - os: macos-15-intel
             target: x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
             asset: pi-darwin-amd64
+            build_tool: cargo
           - os: macos-15
             target: aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
             asset: pi-darwin-arm64
+            build_tool: cargo
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            rust_target: x86_64-pc-windows-msvc
             asset: pi-windows-amd64
+            build_tool: cargo
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -233,8 +255,20 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install Zig [legacy-linux]
+        if: matrix.build_tool == 'zig'
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild [legacy-linux]
+        if: matrix.build_tool == 'zig'
+        run: |
+          set -euxo pipefail
+          cargo install cargo-zigbuild --locked
+
       - name: Add target
-        run: rustup target add "${{ matrix.target }}"
+        run: rustup target add "${{ matrix.rust_target }}"
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
@@ -242,8 +276,68 @@ jobs:
           workspaces: pi_agent_rust -> target
           key: release-${{ matrix.target }}
 
-      - name: Build release binary
+      - name: Build release binary [cargo]
+        if: matrix.build_tool == 'cargo'
         run: cargo build --release --locked --bin pi --target "${{ matrix.target }}"
+
+      - name: Build release binary [cargo-zigbuild]
+        if: matrix.build_tool == 'zig'
+        run: |
+          set -euxo pipefail
+          # 某些 C 依赖在 zig 默认缓存目录下会偶发中间文件缺失。
+          # 这里按目标隔离缓存并自动重试一次，提升稳定性。
+          export ZIG_LOCAL_CACHE_DIR="${PWD}/.zig-cache-${{ matrix.target }}"
+          mkdir -p "${ZIG_LOCAL_CACHE_DIR}"
+
+          for ATTEMPT in 1 2; do
+            if cargo zigbuild --release --locked --bin pi --target "${{ matrix.target }}"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq 2 ]; then
+              echo "::error::cargo zigbuild failed after retry"
+              exit 1
+            fi
+            echo "::warning::cargo zigbuild failed on attempt ${ATTEMPT}, retrying once..."
+            sleep 5
+          done
+
+      - name: Verify glibc floor [legacy-linux]
+        if: matrix.target == 'x86_64-unknown-linux-gnu.2.17'
+        run: |
+          set -euxo pipefail
+          TARGET="${{ matrix.target }}"
+          RUST_TARGET="${{ matrix.rust_target }}"
+
+          # cargo-zigbuild 对 gnu.2.17 目标的输出目录可能与 rust_target 目录一致。
+          BIN_PATH=""
+          for CANDIDATE in \
+            "target/${TARGET}/release/pi" \
+            "target/${RUST_TARGET}/release/pi"
+          do
+            if [ -x "$CANDIDATE" ]; then
+              BIN_PATH="$CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$BIN_PATH" ]; then
+            echo "::error::cannot find built binary in expected target directories"
+            find target -maxdepth 4 -type f -name pi -path "*/release/pi" || true
+            exit 1
+          fi
+
+          MAX_GLIBC="$(objdump -T "$BIN_PATH" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V | tail -n1 || true)"
+          if [ -z "$MAX_GLIBC" ]; then
+            echo "未检测到 GLIBC 版本符号，继续。"
+            exit 0
+          fi
+          echo "Detected max glibc symbol: $MAX_GLIBC"
+
+          HIGHEST="$(printf '%s\n' "$MAX_GLIBC" "GLIBC_2.17" | sort -V | tail -n1)"
+          if [ "$HIGHEST" != "GLIBC_2.17" ]; then
+            echo "::error::glibc symbol floor exceeded: $MAX_GLIBC > GLIBC_2.17"
+            exit 1
+          fi
 
       - name: Create tarball (Unix)
         if: runner.os != 'Windows'
@@ -254,7 +348,28 @@ jobs:
           # Stage the binary and license into a clean directory for the archive
           STAGE_DIR="pi-${{ needs.plan.outputs.version }}-${{ matrix.target }}"
           mkdir -p "$STAGE_DIR"
-          cp "target/${{ matrix.target }}/release/pi" "$STAGE_DIR/"
+          TARGET="${{ matrix.target }}"
+          RUST_TARGET="${{ matrix.rust_target }}"
+
+          # 兼容 cargo/cargo-zigbuild 的不同产物路径。
+          BIN_PATH=""
+          for CANDIDATE in \
+            "target/${TARGET}/release/pi" \
+            "target/${RUST_TARGET}/release/pi"
+          do
+            if [ -x "$CANDIDATE" ]; then
+              BIN_PATH="$CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$BIN_PATH" ]; then
+            echo "::error::cannot find built binary in expected target directories"
+            find target -maxdepth 4 -type f -name pi -path "*/release/pi" || true
+            exit 1
+          fi
+
+          cp "$BIN_PATH" "$STAGE_DIR/"
           cp LICENSE "$STAGE_DIR/" 2>/dev/null || true
           cp README.md "$STAGE_DIR/" 2>/dev/null || true
 
@@ -402,6 +517,8 @@ jobs:
           | Platform | Archive |
           |----------|---------|
           | Linux x86_64 | `pi-linux-amd64.tar.xz` |
+          | Linux x86_64 (glibc 2.17 / CentOS 7.x compatible) | `pi-linux-amd64-glibc217.tar.xz` |
+          | Linux x86_64 (musl static) | `pi-linux-amd64-musl.tar.xz` |
           | Linux ARM64 | `pi-linux-arm64.tar.xz` |
           | macOS x86_64 | `pi-darwin-amd64.tar.xz` |
           | macOS ARM64 (Apple Silicon) | `pi-darwin-arm64.tar.xz` |
