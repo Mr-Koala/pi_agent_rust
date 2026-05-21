@@ -139,7 +139,49 @@ Go 校验建议：
 3. 在 release notes 的“Manual Install”表格增加这两个包名。
 4. 让 `SHA256SUMS` 自动覆盖新增资产。
 
-## 8. 常见故障与处理
+## 8. 实战闭环流程（本次已验证）
+
+下面是这次在 `Mr-Koala/pi_agent_rust` 上实际跑通的闭环流程，可直接复用。
+
+1. 新增独立 workflow（先不动 release）：
+   - 文件：`.github/workflows/linux-legacy-build.yml`
+   - 目标：`x86_64-unknown-linux-gnu.2.17` + `x86_64-unknown-linux-musl`
+2. 首次提交并推送：
+   - `git add .github/workflows/linux-legacy-build.yml`
+   - `git commit -m "ci: add legacy linux compatible build workflow"`
+   - `git push`
+3. 触发并观察 run：
+   - 自动触发（push 命中 paths）或手动触发：
+     - `gh workflow run linux-legacy-build.yml --ref main`
+   - 查看最近 run：
+     - `gh run list --workflow linux-legacy-build.yml --limit 3`
+4. 如果失败，拉失败细节：
+   - `gh run view <run_id> --json jobs,status,conclusion,url`
+   - `gh run view <run_id> --log-failed`
+5. 基于日志修复后再次提交：
+   - 典型修复项（本次实际遇到）：
+     - 增加 `rust_target` + `rustup target add`
+     - 修正打包阶段的目标目录探测
+     - `cargo-zigbuild` 增加独立 `ZIG_LOCAL_CACHE_DIR`
+     - 构建步骤失败后自动重试一次
+   - 提交推送：
+     - `git add ...`
+     - `git commit -m "<fix message>"`
+     - `git push`
+6. 回归验证通过后，确认产物：
+   - `gh run view <run_id> --json jobs`
+   - `gh api repos/<owner>/<repo>/actions/runs/<run_id>/artifacts`
+   - 预期看到：
+     - `pi-linux-amd64-glibc217`
+     - `pi-linux-amd64-musl`
+7. 最后再接入 release workflow：
+   - 在 `release.yml` 增加 legacy Linux 矩阵条目
+   - 复用同样的 zig 构建与校验逻辑
+   - 更新 release notes 资产列表
+
+建议保留“先独立 workflow 验证、后并入 release”的节奏，避免直接污染主发布链路。
+
+## 9. 常见故障与处理
 
 1. 构建偶发失败（`parser.o not found` 之类）：
    - 给 zig 配独立缓存目录。
@@ -151,10 +193,9 @@ Go 校验建议：
 4. 本地可跑、老机不可跑：
    - 以老机烟测结果为准，不要只看 CI 成功。
 
-## 9. 维护建议
+## 10. 维护建议
 
 1. 把“兼容构建”当产品能力长期维护（不是一次性脚本）。
 2. 每次升级编译器/依赖后都重跑老环境烟测。
 3. 用固定命名与固定检查，减少人为判断误差。
 4. 给每个目标维护最小可用验证命令集，防止“能启动但不可用”。
-
