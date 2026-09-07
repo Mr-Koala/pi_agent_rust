@@ -1,7 +1,7 @@
 {
   "schema": "pi.ext.health_delta.v1",
-  "generated_at": "2026-05-13T03:37:59.568Z",
-  "baseline_path": "/data/projects/pi_agent_rust/tests/ext_conformance/reports/conformance_baseline.json",
+  "generated_at": "2026-09-07T13:11:37.019Z",
+  "baseline_path": "/home/runner/work/pi_agent_rust/pi_agent_rust/tests/ext_conformance/reports/conformance_baseline.json",
   "baseline_date": "2026-02-07T23:31:53Z",
   "current_summary": {
     "excluded": 1,

@@ -1,6 +1,6 @@
 # End-User CLI Extension Journey Report
 
-> Generated: 2026-05-13T02:59:58Z
+> Generated: 2026-09-07T13:11:10Z
 
 ## Summary
 
@@ -8,10 +8,10 @@
 |--------|-------|
 | Must-pass total | 123 |
 | Tested | 123 |
-| Passed | 123 |
-| Failed | 0 |
+| Passed | 122 |
+| Failed | 1 |
 | Skipped | 0 |
-| Pass rate | 100.0% |
+| Pass rate | 99.2% |
 
 ## By Journey Category
 
@@ -19,7 +19,21 @@
 |----------|------|------|------|
 | command_provider | 33 | 0 | 0 |
 | event_subscriber | 35 | 0 | 0 |
-| multi_capability | 42 | 0 | 0 |
+| multi_capability | 41 | 1 | 0 |
 | passive | 2 | 0 | 0 |
 | tool_provider | 11 | 0 | 0 |
+
+## Journey Failures
+
+### npm/pi-prompt-template-model (tier 2)
+
+- **Category:** MultiCapability
+- **Journey:** Load extension -> verify all registration types -> cross-check capabilities
+- **Failed at:** verify_all_registrations
+- **Reason:** Expected commands registration but none found
+- **Progress:** 1/4 steps
+- **Reproduce:**
+  ```bash
+  cargo test --test ext_conformance_generated --features ext-conformance -- ext_npm_pi_prompt_template_model --nocapture --exact
+  ```
 
