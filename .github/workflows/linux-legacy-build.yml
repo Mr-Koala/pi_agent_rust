@@ -61,6 +61,12 @@ jobs:
       CARGO_TERM_COLOR: always
       CI: "true"
       RUST_BACKTRACE: "1"
+      # fsqlite 等巨型 crate 用默认 -Z threads=4 并行前端时，runner 会被
+      # 内存压力杀掉（实测连续多次死在 Compiling fsqlite 阶段，exit 143）。
+      # 这里用 RUSTFLAGS 覆盖 .cargo/config.toml 的 rustflags：降并行前端、
+      # 去掉 machine outliner，显著压低单次 rustc 的内存峰值。
+      RUSTFLAGS: "-Zthreads=2"
+      CARGO_INCREMENTAL: "0"
 
     steps:
       - name: Checkout repository
@@ -69,6 +75,24 @@ jobs:
           fetch-depth: 0
           # 支持手动传 ref，便于复现某次提交/Tag 的构建结果。
           ref: ${{ github.event.inputs.ref != '' && github.event.inputs.ref || github.ref }}
+
+      - name: Free disk space and add swap
+        shell: bash
+        run: |
+          set -euxo pipefail
+          df -h /
+          # 预装大组件与本项目无关，全部清掉给 target/ 腾地方。
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af || true
+          # 大型 LTO 链接阶段的内存保险。
+          sudo fallocate -l 8G /swapfile 2>/dev/null || \
+            sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=none
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile || true
+          free -h
+          df -h /
 
       - name: Resolve pinned toolchain channel
         id: toolchain
