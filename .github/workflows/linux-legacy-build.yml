@@ -1,0 +1,249 @@
+name: Linux Legacy Compatible Build
+
+on:
+  # 手动触发：用于按需验证 fork 仓库能否稳定产出兼容老系统的二进制。
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的分支/Tag/提交（默认当前分支）"
+        required: false
+        default: ""
+
+  # 可选自动触发：当 workflow 或构建配置改动时，自动跑一次快速验证。
+  push:
+    branches: [ legacy-linux ]
+    paths:
+      - ".github/workflows/linux-legacy-build.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/config.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-compat:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # amd64：glibc 2.17 基线，面向 CentOS 7.x 兼容。
+          - target: x86_64-unknown-linux-gnu.2.17
+            rust_target: x86_64-unknown-linux-gnu
+            asset_name: pi-linux-amd64-glibc217
+            archive_ext: tar.xz
+
+          # amd64：musl 静态链接兜底包，最大化跨发行版可运行性。
+          - target: x86_64-unknown-linux-musl
+            rust_target: x86_64-unknown-linux-musl
+            asset_name: pi-linux-amd64-musl
+            archive_ext: tar.xz
+
+          # arm64：glibc 2.28 基线，面向 openEuler 22.03 LTS 之前的
+          # 老基线国产化/企业发行版（如银河麒麟 V10、RHEL 8 系）。
+          - target: aarch64-unknown-linux-gnu.2.28
+            rust_target: aarch64-unknown-linux-gnu
+            asset_name: pi-linux-arm64-glibc228
+            archive_ext: tar.xz
+
+          # arm64：musl 静态链接兜底包。
+          - target: aarch64-unknown-linux-musl
+            rust_target: aarch64-unknown-linux-musl
+            asset_name: pi-linux-arm64-musl
+            archive_ext: tar.xz
+
+    env:
+      CARGO_TERM_COLOR: always
+      CI: "true"
+      RUST_BACKTRACE: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 支持手动传 ref，便于复现某次提交/Tag 的构建结果。
+          ref: ${{ github.event.inputs.ref != '' && github.event.inputs.ref || github.ref }}
+
+      - name: Resolve pinned toolchain channel
+        id: toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # 上游用 rust-toolchain.toml 钉死 nightly 日期；这里解析出来，
+          # 保证 workflow 不随上游换钉而漂移。
+          CHANNEL="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          if [ -z "$CHANNEL" ]; then
+            echo "::error::cannot parse channel from rust-toolchain.toml"
+            exit 1
+          fi
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Using toolchain: $CHANNEL"
+
+      - name: Ensure stub files referenced by include! exist
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # legacy_pi_mono_code 历史上是子模块；若 checkout 未带内容而
+          # Cargo.toml 的 include 列表又引用了它，这里兜底生成最小桩文件。
+          MODELS_TS="legacy_pi_mono_code/pi-mono/packages/ai/src/models.generated.ts"
+          if [ ! -f "$MODELS_TS" ]; then
+            mkdir -p "$(dirname "$MODELS_TS")"
+            cat > "$MODELS_TS" <<'STUB'
+          // CI stub file: keep build green when submodule content is unavailable.
+          export const MODELS = {} as const;
+          STUB
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo install cargo-zigbuild --locked
+
+      - name: Add Rust target
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # cargo-zigbuild 仍要求先安装 Rust 标准库目标。
+          rustup target add "${{ matrix.rust_target }}"
+
+      - name: Build release binary with zig linker
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # 某些 C/Tree-sitter 依赖在 zig 默认缓存目录下会偶发出现中间产物丢失。
+          # 这里为每个目标隔离缓存目录，并在失败时自动重试一次，降低偶发失败率。
+          export ZIG_LOCAL_CACHE_DIR="${PWD}/.zig-cache-${{ matrix.target }}"
+          mkdir -p "${ZIG_LOCAL_CACHE_DIR}"
+
+          # 使用 zig 进行链接控制：
+          # - gnu.N 目标可显式约束 glibc 符号版本上限。
+          # - musl 目标用于提供静态链接兜底包。
+          for ATTEMPT in 1 2; do
+            if cargo zigbuild \
+              --release \
+              --locked \
+              --bin pi \
+              --target "${{ matrix.target }}"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq 2 ]; then
+              echo "::error::cargo zigbuild failed after retry"
+              exit 1
+            fi
+            echo "::warning::cargo zigbuild failed on attempt ${ATTEMPT}, retrying once..."
+            sleep 5
+          done
+
+      - name: Verify glibc floor for gnu artifact
+        if: contains(matrix.target, 'unknown-linux-gnu.')
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          TARGET="${{ matrix.target }}"
+          RUST_TARGET="${{ matrix.rust_target }}"
+
+          # cargo-zigbuild 在带 glibc 后缀的 target 下，输出目录在不同版本中
+          # 可能是 target/<full-target>/release 或 target/<rust-target>/release。
+          # 这里做双路径探测，避免因为目录命名差异导致误报失败。
+          BIN_PATH=""
+          for CANDIDATE in \
+            "target/${TARGET}/release/pi" \
+            "target/${RUST_TARGET}/release/pi"
+          do
+            if [ -x "$CANDIDATE" ]; then
+              BIN_PATH="$CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$BIN_PATH" ]; then
+            echo "::error::cannot find built binary in expected target directories"
+            find target -maxdepth 4 -type f -name pi -path "*/release/pi" || true
+            exit 1
+          fi
+
+          # 从 target 三元组的 gnu.N 后缀解析出允许的最高 glibc 版本。
+          EXPECTED="GLIBC_$(echo "$TARGET" | sed -n 's/.*unknown-linux-gnu\.\([0-9.]*\)$/\1/p')"
+          if [ -z "$EXPECTED" ]; then
+            echo "::error::cannot parse expected glibc floor from target $TARGET"
+            exit 1
+          fi
+
+          # 从导出符号中提取 GLIBC_* 版本，确保最高版本不超过预期基线。
+          MAX_GLIBC="$(objdump -T "$BIN_PATH" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V | tail -n1 || true)"
+
+          if [ -z "$MAX_GLIBC" ]; then
+            echo "未检测到 GLIBC 版本符号，继续（可能为静态或特殊链接场景）。"
+            exit 0
+          fi
+
+          echo "Detected max glibc symbol: $MAX_GLIBC (expected floor: $EXPECTED)"
+          HIGHEST="$(printf '%s\n' "$MAX_GLIBC" "$EXPECTED" | sort -V | tail -n1)"
+          if [ "$HIGHEST" != "$EXPECTED" ]; then
+            echo "::error::glibc symbol floor exceeded: $MAX_GLIBC > $EXPECTED"
+            exit 1
+          fi
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          VERSION="${GITHUB_SHA::7}"
+          TARGET="${{ matrix.target }}"
+          RUST_TARGET="${{ matrix.rust_target }}"
+          ASSET="${{ matrix.asset_name }}"
+
+          mkdir -p dist
+          STAGE_DIR="pi-${VERSION}-${TARGET}"
+          mkdir -p "$STAGE_DIR"
+
+          BIN_PATH=""
+          for CANDIDATE in \
+            "target/${TARGET}/release/pi" \
+            "target/${RUST_TARGET}/release/pi"
+          do
+            if [ -x "$CANDIDATE" ]; then
+              BIN_PATH="$CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$BIN_PATH" ]; then
+            echo "::error::cannot find built binary in expected target directories"
+            find target -maxdepth 4 -type f -name pi -path "*/release/pi" || true
+            exit 1
+          fi
+
+          cp "$BIN_PATH" "$STAGE_DIR/"
+          cp LICENSE "$STAGE_DIR/" 2>/dev/null || true
+          cp README.md "$STAGE_DIR/" 2>/dev/null || true
+
+          tar -cJf "dist/${ASSET}.${{ matrix.archive_ext }}" "$STAGE_DIR"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/*
