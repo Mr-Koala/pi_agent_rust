@@ -21,8 +21,8 @@
     ],
     "rss_interval_secs": 5
   },
-  "correlation_id": "bd-2zcs5.71-darkgoose-20260510T0058Z",
-  "generated_at": "2026-05-10T01:22:30Z",
+  "correlation_id": "weekly-35605667842",
+  "generated_at": "2026-09-21T13:32:38Z",
   "pass": true,
   "results": {
     "error_count": 0,
@@ -30,16 +30,16 @@
     "extensions_loaded": 15,
     "latency": {
       "ok": true,
-      "p99_first_us": 399,
-      "p99_last_us": 368,
+      "p99_first_us": 168,
+      "p99_last_us": 189,
       "summary": {
         "count": 1500,
-        "max": 1142,
-        "mean": 161,
-        "min": 67,
-        "p50": 128,
-        "p95": 308,
-        "p99": 396
+        "max": 524,
+        "mean": 124,
+        "min": 70,
+        "p50": 133,
+        "p95": 177,
+        "p99": 207
       }
     },
     "reactor": {
@@ -223,13 +223,13 @@
       ]
     },
     "rss": {
-      "growth_pct": 0.0025331030512377663,
-      "initial_kb": 35573760,
-      "max_kb": 35663872,
+      "growth_pct": 0.0027008777852802163,
+      "initial_kb": 30330880,
+      "max_kb": 30412800,
       "ok": true
     },
     "sample_errors": []
   },
-  "run_id": "bd-2zcs5.71-darkgoose-20260510T0058Z",
+  "run_id": "weekly-35605667842",
   "schema": "pi.ext.stress_triage.v1"
 }
