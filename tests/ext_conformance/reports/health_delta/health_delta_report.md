@@ -1,6 +1,6 @@
 # Extension Health & Regression Delta Report
 
-> Generated: 2026-05-13T03:37:59Z
+> Generated: 2026-09-28T14:46:50Z
 > Baseline: 2026-02-07T23:31:53Z
 
 ## Aggregate Comparison
